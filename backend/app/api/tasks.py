@@ -21,7 +21,7 @@ async def list_tasks(
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ) -> list[TaskRead]:
-    query = select(Task).order_by(Task.created_at.desc()).limit(limit).offset(offset)
+    query = select(Task).where(Task.deleted.is_(False)).order_by(Task.created_at.desc()).limit(limit).offset(offset)
     if file_id:
         query = query.where(Task.file_id == file_id)
     if status:
@@ -35,6 +35,6 @@ async def list_tasks(
 @router.get("/{task_id}", response_model=TaskRead)
 async def get_task(task_id: UUID, db: AsyncSession = Depends(get_db)) -> TaskRead:
     model = await db.get(Task, task_id)
-    if not model:
+    if not model or model.deleted:
         raise HTTPException(status_code=404, detail="task not found")
     return TaskRead.model_validate(model, from_attributes=True)

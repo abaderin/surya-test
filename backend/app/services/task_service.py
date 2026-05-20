@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.block import Block
@@ -66,13 +66,17 @@ class TaskService:
         stale_threshold = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
         await self.session.execute(
             update(Task)
-            .where(and_(Task.status == TaskStatus.IN_PROGRESS, Task.started_at < stale_threshold))
+            .where(and_(Task.deleted.is_(False), Task.status == TaskStatus.IN_PROGRESS, Task.started_at < stale_threshold))
             .values(status=TaskStatus.NEW)
         )
         await self.session.commit()
 
         result = await self.session.execute(
-            select(Task).where(Task.status == TaskStatus.NEW).order_by(Task.created_at).limit(1).with_for_update(skip_locked=True)
+            select(Task)
+            .where(and_(Task.deleted.is_(False), Task.status == TaskStatus.NEW))
+            .order_by(Task.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
         )
         task = result.scalar_one_or_none()
         if not task:
@@ -84,6 +88,8 @@ class TaskService:
         return task
 
     async def execute_task(self, task: Task) -> None:
+        if task.deleted:
+            return
         try:
             if task.type == TaskType.VALIDATION:
                 await self._execute_validation(task)
@@ -256,9 +262,13 @@ class TaskService:
         if not file:
             return
         done = await self.session.scalar(
-            select(func.count()).select_from(Task).where(and_(Task.file_id == file_id, Task.status == TaskStatus.DONE))
+            select(func.count())
+            .select_from(Task)
+            .where(and_(Task.file_id == file_id, Task.deleted.is_(False), Task.status == TaskStatus.DONE))
         )
-        total = await self.session.scalar(select(func.count()).select_from(Task).where(Task.file_id == file_id))
+        total = await self.session.scalar(
+            select(func.count()).select_from(Task).where(and_(Task.file_id == file_id, Task.deleted.is_(False)))
+        )
         file.progress_done = int(done or 0)
         file.progress_total = int(total or 0)
         if (
@@ -277,3 +287,41 @@ class TaskService:
     async def _emit(self, file_id: UUID, event_type: str, payload: dict) -> None:
         if self.bus:
             await self.bus.publish(file_id, event_type, payload)
+
+    async def reprocess_file(self, file_id: UUID) -> File:
+        file = await self.session.get(File, file_id)
+        if not file:
+            raise ValueError("file not found")
+        if file.status not in {FileStatus.DONE, FileStatus.FAILED, FileStatus.VALIDATION_FAILED}:
+            raise RuntimeError("file is being processed")
+        if not file.source_path:
+            raise RuntimeError("source file is missing")
+
+        await self.session.execute(
+            update(Task)
+            .where(and_(Task.file_id == file_id, Task.deleted.is_(False)))
+            .values(deleted=True, page_id=None)
+        )
+        await self.session.execute(delete(Block).where(Block.file_id == file_id))
+        await self.session.execute(delete(Page).where(Page.file_id == file_id))
+        self.storage.remove_generated_artifacts(file_id)
+
+        file.status = FileStatus.VALIDATION
+        file.pages_count = None
+        file.progress_done = 0
+        file.progress_total = 1
+        file.cover_path = None
+        file.error_summary = None
+
+        self.session.add(
+            Task(
+                file_id=file.id,
+                type=TaskType.VALIDATION,
+                status=TaskStatus.NEW,
+                input_payload={"file_id": str(file.id)},
+                deleted=False,
+            )
+        )
+        await self.session.commit()
+        await self._emit(file.id, "file.updated", {"status": file.status})
+        return file

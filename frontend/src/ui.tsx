@@ -14,7 +14,7 @@ import {
 } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Route, Routes, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { fetchFile, fetchFilePages, fetchFiles, fetchTask, fetchTasks, mediaUrl, uploadPdf } from "./api";
+import { fetchFile, fetchFilePages, fetchFiles, fetchTask, fetchTasks, mediaUrl, reprocessFile, uploadPdf } from "./api";
 import { useEffect, useState } from "react";
 
 function useFileEvents(fileId: string | undefined) {
@@ -39,6 +39,8 @@ function FilesPage() {
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [reprocessingFileId, setReprocessingFileId] = useState<string | null>(null);
+  const [reprocessErrorById, setReprocessErrorById] = useState<Record<string, string>>({});
 
   const onUpload = async () => {
     if (!selectedFile) return;
@@ -54,6 +56,21 @@ function FilesPage() {
       setUploadError(message);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const onReprocess = async (fileId: string) => {
+    setReprocessingFileId(fileId);
+    setReprocessErrorById((prev) => ({ ...prev, [fileId]: "" }));
+    try {
+      await reprocessFile(fileId);
+      await qc.invalidateQueries({ queryKey: ["files"] });
+      await qc.invalidateQueries({ queryKey: ["tasks"] });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Reprocess failed";
+      setReprocessErrorById((prev) => ({ ...prev, [fileId]: message }));
+    } finally {
+      setReprocessingFileId(null);
     }
   };
 
@@ -109,10 +126,24 @@ function FilesPage() {
                 status: {f.status} | progress: {f.progress_done}/{f.progress_total} | pages: {f.pages_count ?? "-"}
               </Text>
               {f.error_summary && <Text c="red">{f.error_summary}</Text>}
+              {reprocessErrorById[f.id] && <Text c="red">{reprocessErrorById[f.id]}</Text>}
             </Box>
-            <Button component={Link} to={`/files/${f.id}`}>
-              Open
-            </Button>
+            <Group>
+              <Button
+                variant="light"
+                loading={reprocessingFileId === f.id}
+                disabled={
+                  reprocessingFileId !== null ||
+                  !["done", "failed", "validation_failed"].includes(f.status)
+                }
+                onClick={() => onReprocess(f.id)}
+              >
+                Reprocess
+              </Button>
+              <Button component={Link} to={`/files/${f.id}`}>
+                Open
+              </Button>
+            </Group>
           </Group>
         </Card>
       ))}

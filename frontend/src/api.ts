@@ -40,6 +40,12 @@ export async function fetchTask(taskId: string): Promise<TaskItem> {
   return res.json();
 }
 
+export async function reprocessFile(fileId: string): Promise<FileItem> {
+  const res = await fetch(`${API_BASE}/files/${fileId}/reprocess`, { method: "POST" });
+  if (!res.ok) throw new Error("failed to reprocess file");
+  return res.json();
+}
+
 export function mediaUrl(path: string | null): string {
   if (!path) return "";
   return `${API_BASE}/media/${path}`;

@@ -53,6 +53,20 @@ async def get_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> FileRea
     return FileRead.model_validate(model, from_attributes=True)
 
 
+@router.post("/{file_id}/reprocess", response_model=FileRead)
+async def reprocess_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> FileRead:
+    event_bus = await get_event_bus()
+    service = TaskService(db, get_storage(), get_processor(), event_bus)
+    try:
+        model = await service.reprocess_file(file_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await db.refresh(model)
+    return FileRead.model_validate(model, from_attributes=True)
+
+
 @router.get("/{file_id}/pages", response_model=PageListResponse)
 async def list_pages(
     file_id: UUID,

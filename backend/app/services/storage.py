@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 from pathlib import Path
 from uuid import UUID
 
@@ -63,3 +64,9 @@ class StorageService:
 
     def resolve_media_path(self, rel_path: str) -> Path:
         return self._abs(rel_path)
+
+    def remove_generated_artifacts(self, file_id: UUID) -> None:
+        for rel_dir in (f"pages/{file_id}", f"thumbs/{file_id}"):
+            target = self._abs(rel_dir)
+            if target.exists():
+                shutil.rmtree(target)
