@@ -3,6 +3,8 @@ from pathlib import Path
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.models.enums import TaskType
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -15,6 +17,7 @@ class Settings(BaseSettings):
     worker_enabled: bool = False
     worker_poll_seconds: float = 1.0
     worker_stale_after_seconds: int = 120
+    worker_task_types: str | None = None
     cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
 
     @property
@@ -25,6 +28,15 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def worker_task_types_set(self) -> set[TaskType] | None:
+        if not self.worker_task_types:
+            return None
+        values = [item.strip() for item in self.worker_task_types.split(",") if item.strip()]
+        if not values:
+            return None
+        return {TaskType(value) for value in values}
 
     @model_validator(mode="after")
     def _normalize_storage(self) -> "Settings":

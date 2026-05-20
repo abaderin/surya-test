@@ -79,9 +79,31 @@ services:
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /app/storage
       WORKER_ENABLED: "false"
+      WORKER_TASK_TYPES: validation,render_page,ocr,image_extraction,meta_extraction
       CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
     volumes:
       - storage:/app/storage
+
+  layout-worker:
+    image: surya-test-app:latest
+    command: ["uv", "run", "python", "-m", "app.worker.runner"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+asyncpg://surya:surya@db:5432/surya
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /app/storage
+      WORKER_ENABLED: "false"
+      WORKER_TASK_TYPES: layout
+      CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
+    volumes:
+      - storage:/app/storage
+    gpus: all
 
   frontend:
     build:

@@ -30,6 +30,9 @@ class WorkerLoop:
 
     async def _run_once(self, session: AsyncSession) -> None:
         service = TaskService(session, get_storage(), get_processor(), await get_event_bus())
-        next_task = await service.claim_next_task(settings.worker_stale_after_seconds)
+        next_task = await service.claim_next_task(
+            settings.worker_stale_after_seconds,
+            settings.worker_task_types_set,
+        )
         if next_task:
             await service.execute_task(next_task)

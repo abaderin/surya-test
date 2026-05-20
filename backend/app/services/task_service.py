@@ -62,18 +62,34 @@ class TaskService:
         await self.session.commit()
         await self._emit(file.id, "file.updated", {"status": file.status})
 
-    async def claim_next_task(self, stale_after_seconds: int) -> Task | None:
+    async def claim_next_task(
+        self,
+        stale_after_seconds: int,
+        allowed_types: set[TaskType] | None = None,
+    ) -> Task | None:
         stale_threshold = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
+        task_type_filter = (
+            Task.type.in_(allowed_types)
+            if allowed_types is not None
+            else Task.type != TaskType.LAYOUT
+        )
         await self.session.execute(
             update(Task)
-            .where(and_(Task.deleted.is_(False), Task.status == TaskStatus.IN_PROGRESS, Task.started_at < stale_threshold))
+            .where(
+                and_(
+                    Task.deleted.is_(False),
+                    Task.status == TaskStatus.IN_PROGRESS,
+                    Task.started_at < stale_threshold,
+                    task_type_filter,
+                )
+            )
             .values(status=TaskStatus.NEW)
         )
         await self.session.commit()
 
         result = await self.session.execute(
             select(Task)
-            .where(and_(Task.deleted.is_(False), Task.status == TaskStatus.NEW))
+            .where(and_(Task.deleted.is_(False), Task.status == TaskStatus.NEW, task_type_filter))
             .order_by(Task.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
