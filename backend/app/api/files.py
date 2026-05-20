@@ -2,7 +2,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File as UploadFileArg, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,6 +65,19 @@ async def reprocess_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> F
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.refresh(model)
     return FileRead.model_validate(model, from_attributes=True)
+
+
+@router.delete("/{file_id}", status_code=204, response_class=Response)
+async def delete_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> Response:
+    event_bus = await get_event_bus()
+    service = TaskService(db, get_storage(), get_processor(), event_bus)
+    try:
+        await service.delete_file(file_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=204)
 
 
 @router.get("/{file_id}/pages", response_model=PageListResponse)

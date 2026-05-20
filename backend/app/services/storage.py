@@ -70,3 +70,9 @@ class StorageService:
             target = self._abs(rel_dir)
             if target.exists():
                 shutil.rmtree(target)
+
+    def remove_file_resources(self, file_id: UUID) -> None:
+        for rel_dir in (f"originals/{file_id}", f"pages/{file_id}", f"thumbs/{file_id}"):
+            target = self._abs(rel_dir)
+            if target.exists():
+                shutil.rmtree(target)

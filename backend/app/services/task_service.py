@@ -325,3 +325,18 @@ class TaskService:
         await self.session.commit()
         await self._emit(file.id, "file.updated", {"status": file.status})
         return file
+
+    async def delete_file(self, file_id: UUID) -> None:
+        file = await self.session.get(File, file_id)
+        if not file:
+            raise ValueError("file not found")
+        if file.status not in {FileStatus.DONE, FileStatus.FAILED, FileStatus.VALIDATION_FAILED}:
+            raise RuntimeError("file is being processed")
+
+        await self.session.execute(delete(Block).where(Block.file_id == file_id))
+        await self.session.execute(delete(Task).where(Task.file_id == file_id))
+        await self.session.execute(delete(Page).where(Page.file_id == file_id))
+        await self.session.execute(delete(File).where(File.id == file_id))
+        self.storage.remove_file_resources(file_id)
+        await self.session.commit()
+        await self._emit(file_id, "file.deleted", {"file_id": str(file_id)})

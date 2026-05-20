@@ -14,7 +14,7 @@ import {
 } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Route, Routes, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { fetchFile, fetchFilePages, fetchFiles, fetchTask, fetchTasks, mediaUrl, reprocessFile, uploadPdf } from "./api";
+import { deleteFile, fetchFile, fetchFilePages, fetchFiles, fetchTask, fetchTasks, mediaUrl, reprocessFile, uploadPdf } from "./api";
 import { useEffect, useState } from "react";
 
 function useFileEvents(fileId: string | undefined) {
@@ -40,7 +40,9 @@ function FilesPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [reprocessingFileId, setReprocessingFileId] = useState<string | null>(null);
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
   const [reprocessErrorById, setReprocessErrorById] = useState<Record<string, string>>({});
+  const [deleteErrorById, setDeleteErrorById] = useState<Record<string, string>>({});
 
   const onUpload = async () => {
     if (!selectedFile) return;
@@ -71,6 +73,21 @@ function FilesPage() {
       setReprocessErrorById((prev) => ({ ...prev, [fileId]: message }));
     } finally {
       setReprocessingFileId(null);
+    }
+  };
+
+  const onDelete = async (fileId: string) => {
+    setDeletingFileId(fileId);
+    setDeleteErrorById((prev) => ({ ...prev, [fileId]: "" }));
+    try {
+      await deleteFile(fileId);
+      await qc.invalidateQueries({ queryKey: ["files"] });
+      await qc.invalidateQueries({ queryKey: ["tasks"] });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Delete failed";
+      setDeleteErrorById((prev) => ({ ...prev, [fileId]: message }));
+    } finally {
+      setDeletingFileId(null);
     }
   };
 
@@ -127,6 +144,7 @@ function FilesPage() {
               </Text>
               {f.error_summary && <Text c="red">{f.error_summary}</Text>}
               {reprocessErrorById[f.id] && <Text c="red">{reprocessErrorById[f.id]}</Text>}
+              {deleteErrorById[f.id] && <Text c="red">{deleteErrorById[f.id]}</Text>}
             </Box>
             <Group>
               <Button
@@ -134,11 +152,25 @@ function FilesPage() {
                 loading={reprocessingFileId === f.id}
                 disabled={
                   reprocessingFileId !== null ||
+                  deletingFileId !== null ||
                   !["done", "failed", "validation_failed"].includes(f.status)
                 }
                 onClick={() => onReprocess(f.id)}
               >
                 Reprocess
+              </Button>
+              <Button
+                color="red"
+                variant="light"
+                loading={deletingFileId === f.id}
+                disabled={
+                  reprocessingFileId !== null ||
+                  deletingFileId !== null ||
+                  !["done", "failed", "validation_failed"].includes(f.status)
+                }
+                onClick={() => onDelete(f.id)}
+              >
+                Delete
               </Button>
               <Button component={Link} to={`/files/${f.id}`}>
                 Open

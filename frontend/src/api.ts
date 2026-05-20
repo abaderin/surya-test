@@ -46,6 +46,11 @@ export async function reprocessFile(fileId: string): Promise<FileItem> {
   return res.json();
 }
 
+export async function deleteFile(fileId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/files/${fileId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("failed to delete file");
+}
+
 export function mediaUrl(path: string | null): string {
   if (!path) return "";
   return `${API_BASE}/media/${path}`;

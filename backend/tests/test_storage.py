@@ -47,3 +47,25 @@ def test_remove_generated_artifacts_removes_pages_and_thumbs_only(tmp_path: Path
     assert not thumbs.exists()
     assert originals.exists()
     assert (originals / "source.pdf").exists()
+
+
+def test_remove_file_resources_removes_originals_pages_and_thumbs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(storage_module.settings, "storage_root", str(tmp_path))
+    service = StorageService()
+    file_id = uuid4()
+
+    pages = tmp_path / "pages" / str(file_id)
+    thumbs = tmp_path / "thumbs" / str(file_id)
+    originals = tmp_path / "originals" / str(file_id)
+    pages.mkdir(parents=True)
+    thumbs.mkdir(parents=True)
+    originals.mkdir(parents=True)
+    (pages / "1.png").write_text("x", encoding="utf-8")
+    (thumbs / "cover.svg").write_text("x", encoding="utf-8")
+    (originals / "source.pdf").write_text("x", encoding="utf-8")
+
+    service.remove_file_resources(file_id)
+
+    assert not pages.exists()
+    assert not thumbs.exists()
+    assert not originals.exists()
