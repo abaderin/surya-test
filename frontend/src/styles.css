@@ -1,0 +1,26 @@
+body {
+  margin: 0;
+  background: linear-gradient(180deg, #f2f4f8, #e8edf5);
+}
+
+.page-box {
+  position: relative;
+  max-width: 520px;
+}
+
+.page-image {
+  width: 100%;
+  display: block;
+  border: 1px solid #ccd3e0;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.focused {
+  border-color: #3b82f6;
+}
