@@ -13,9 +13,9 @@ Monorepo with:
 3. Build and start everything:
    - `docker compose up --build`
 4. Open frontend:
-   - `http://localhost:5173`
+   - `http://localhost:18080`
 5. Useful logs:
-   - `docker compose logs -f backend worker frontend`
+   - `docker compose logs -f router backend worker frontend`
 
 ## Notes
 
@@ -23,4 +23,4 @@ Monorepo with:
 - Redis is used as event bus for websocket updates.
 - Task queue durability is PostgreSQL-based.
 - File storage is filesystem-based and controlled by `STORAGE_ROOT`.
-- Frontend serves static files via nginx and proxies `/api` and `/api/ws` to backend.
+- Router nginx is the only public entrypoint and proxies frontend and backend traffic.

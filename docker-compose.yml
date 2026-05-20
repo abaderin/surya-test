@@ -10,8 +10,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    ports:
-      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -22,8 +20,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    ports:
-      - "6379:6379"
 
   migrate:
     build:
@@ -40,7 +36,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://surya:surya@db:5432/surya
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /app/storage
-      CORS_ORIGINS: http://127.0.0.1:5173,http://localhost:5173,http://razer.home.baderin.me:5173
+      CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
     volumes:
       - storage:/app/storage
 
@@ -59,9 +55,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /app/storage
       WORKER_ENABLED: "false"
-      CORS_ORIGINS: http://127.0.0.1:5173,http://localhost:5173,http://razer.home.baderin.me:5173
-    ports:
-      - "8000:8000"
+      CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
     volumes:
       - storage:/app/storage
     healthcheck:
@@ -85,7 +79,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /app/storage
       WORKER_ENABLED: "false"
-      CORS_ORIGINS: http://127.0.0.1:5173,http://localhost:5173,http://razer.home.baderin.me:5173
+      CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
     volumes:
       - storage:/app/storage
 
@@ -96,8 +90,18 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  router:
+    image: nginx:alpine
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
     ports:
-      - "5173:80"
+      - "18080:80"
+    volumes:
+      - ./docker/router/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   pgdata:
