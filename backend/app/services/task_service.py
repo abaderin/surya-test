@@ -28,13 +28,27 @@ COLOR_MAP = {
     "formula": "purple",
 }
 
+OCR_BLOCK_TYPES = frozenset(
+    {
+        "text",
+        "sectionheader",
+        "listitem",
+        "pageheader",
+        "equation",
+        "caption",
+        "footnote",
+        "code",
+        "form",
+    }
+)
+
 
 def color_for_block_type(block_type: str) -> str:
     return COLOR_MAP.get(block_type.strip().lower(), "gray")
 
 
 def should_enqueue_ocr(block_type: str) -> bool:
-    return block_type == "Text"
+    return block_type.strip().lower() in OCR_BLOCK_TYPES
 
 
 def should_enqueue_image_extraction(block_type: str) -> bool:
