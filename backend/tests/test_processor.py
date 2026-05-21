@@ -66,10 +66,47 @@ def test_layout_converts_surya_boxes_with_clipping_and_polygon(monkeypatch: pyte
     assert blocks[0].raw["label"] == "Text"
 
 
-def test_ocr_text_for_textual_blocks() -> None:
+def test_ocr_extracts_text_from_recognition_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_line1 = SimpleNamespace(text="Hello")
+    fake_line2 = SimpleNamespace(text="World")
+    fake_ocr_result = SimpleNamespace(
+        text_lines=[fake_line1, fake_line2],
+        model_dump=lambda mode="json": {"text_lines": [{"text": "Hello"}, {"text": "World"}]},
+    )
+
+    class FakeImage:
+        def convert(self, mode: str) -> "FakeImage":
+            assert mode == "RGB"
+            return self
+
+        def __enter__(self) -> "FakeImage":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    class FakePILImageModule:
+        @staticmethod
+        def open(path: str) -> FakeImage:
+            assert path == "/tmp/page.png"
+            return FakeImage()
+
+    class FakePredictor:
+        def __call__(self, images, bboxes, sort_lines, math_mode):
+            assert len(images) == 1
+            assert bboxes == [[[10, 20, 40, 60]]]
+            assert sort_lines is True
+            assert math_mode is True
+            return [fake_ocr_result]
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
     p = ProcessorService()
-    assert "text" in p.ocr("text")
-    assert p.ocr("image") == {}
+    monkeypatch.setattr(p, "_get_recognition_predictor", lambda: FakePredictor())
+
+    result = p.ocr("/tmp/page.png", {"x": 10, "y": 20, "width": 30, "height": 40})
+
+    assert result["text"] == "Hello\nWorld"
+    assert result["raw_surya_ocr"]["text_lines"][0]["text"] == "Hello"
 
 
 def test_render_page_writes_png_and_returns_dimensions(tmp_path: Path) -> None:

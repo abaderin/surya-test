@@ -283,11 +283,16 @@ function FilePage() {
             </Box>
             <Stack>
               {p.blocks.map((b: any) => (
-                <Card key={b.id} withBorder className={hoveredBlock === b.id ? "focused" : ""}>
-                  <Text fw={600}>
-                    {b.type} ({b.color_key})
+                <Card
+                  key={b.id}
+                  withBorder
+                  className={hoveredBlock === b.id ? "focused" : ""}
+                  style={{ borderColor: b.color_key, borderWidth: 2 }}
+                >
+                  <Text fw={600}>{b.type}</Text>
+                  <Text size="sm" component="pre" style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {typeof b.result?.text === "string" && b.result.text.trim() ? b.result.text : "OCR pending"}
                   </Text>
-                  <Text size="sm">{JSON.stringify(b.result ?? {}, null, 2)}</Text>
                 </Card>
               ))}
             </Stack>

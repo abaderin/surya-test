@@ -29,6 +29,7 @@ class ProcessorService:
 
     def __init__(self) -> None:
         self._layout_predictor: Any | None = None
+        self._recognition_predictor: Any | None = None
 
     def validate_pdf(self, source_path: str) -> int:
         reader = PdfReader(source_path)
@@ -160,10 +161,52 @@ class ProcessorService:
             return value
         return str(value)
 
-    def ocr(self, block_type: str) -> dict:
-        if block_type in {"text", "header"}:
-            return {"text": f"Detected {block_type} content"}
-        return {}
+    def ocr(self, page_path: str, bbox_px: dict) -> dict:
+        from PIL import Image
+
+        predictor = self._get_recognition_predictor()
+        x1 = int(bbox_px["x"])
+        y1 = int(bbox_px["y"])
+        x2 = int(bbox_px["x"] + bbox_px["width"])
+        y2 = int(bbox_px["y"] + bbox_px["height"])
+        if x2 <= x1 or y2 <= y1:
+            return {"text": "", "raw_surya_ocr": []}
+
+        with Image.open(page_path) as image:
+            rgb_image = image.convert("RGB")
+        ocr_results = predictor(
+            [rgb_image],
+            bboxes=[[[x1, y1, x2, y2]]],
+            sort_lines=True,
+            math_mode=True,
+        )
+        if not ocr_results:
+            return {"text": "", "raw_surya_ocr": []}
+
+        result = ocr_results[0]
+        text_lines = getattr(result, "text_lines", []) or []
+        text = "\n".join(str(getattr(line, "text", "")).strip() for line in text_lines if str(getattr(line, "text", "")).strip())
+        return {
+            "text": text,
+            "raw_surya_ocr": self._raw_surya_ocr(result),
+        }
+
+    def _get_recognition_predictor(self) -> Any:
+        if self._recognition_predictor is not None:
+            return self._recognition_predictor
+        from surya.foundation import FoundationPredictor
+        from surya.recognition import RecognitionPredictor
+        from surya.settings import settings as surya_settings
+
+        foundation = FoundationPredictor(checkpoint=surya_settings.RECOGNITION_MODEL_CHECKPOINT)
+        self._recognition_predictor = RecognitionPredictor(foundation)
+        return self._recognition_predictor
+
+    def _raw_surya_ocr(self, result: Any) -> Any:
+        if hasattr(result, "model_dump"):
+            dumped = result.model_dump(mode="json")
+            return self._to_json_compatible(dumped)
+        return self._to_json_compatible(result)
 
     def image_extraction(self, block_type: str) -> dict:
         if block_type == "image":

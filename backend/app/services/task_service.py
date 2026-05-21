@@ -33,6 +33,10 @@ def color_for_block_type(block_type: str) -> str:
     return COLOR_MAP.get(block_type.strip().lower(), "gray")
 
 
+def should_enqueue_ocr(block_type: str) -> bool:
+    return block_type == "Text"
+
+
 class TaskService:
     def __init__(
         self,
@@ -248,6 +252,9 @@ class TaskService:
             raise ValueError("page not found")
         if not page.image_path or not page.width_px or not page.height_px:
             raise ValueError("page image not ready")
+        page.status = PageStatus.IN_PROGRESS
+        page.error_message = None
+        await self.session.flush()
         page_image_abs_path = self.storage.resolve_media_path(page.image_path)
         blocks = self.processor.layout(str(page_image_abs_path), page.width_px, page.height_px)
         for i, block in enumerate(blocks):
@@ -266,15 +273,17 @@ class TaskService:
             )
             self.session.add(model)
             await self.session.flush()
-            self.session.add(
-                Task(
-                    file_id=page.file_id,
-                    page_id=page.id,
-                    type=TaskType.OCR,
-                    status=TaskStatus.NEW,
-                    input_payload={"block_id": str(model.id), "type": model.type},
+            if should_enqueue_ocr(model.type):
+                self.session.add(
+                    Task(
+                        file_id=page.file_id,
+                        page_id=page.id,
+                        type=TaskType.OCR,
+                        status=TaskStatus.NEW,
+                        input_payload={"block_id": str(model.id), "type": model.type},
+                    )
                 )
-            )
+        page.status = PageStatus.DONE
         task.output_payload = {"blocks": len(blocks)}
         await self.session.commit()
 
@@ -286,9 +295,17 @@ class TaskService:
         block = await self.session.get(Block, UUID(block_id))
         if not block:
             raise ValueError("block not found")
-        ocr = self.processor.ocr(block.type)
+        if not should_enqueue_ocr(block.type):
+            task.output_payload = {"skipped": True, "reason": "unsupported_label"}
+            return
+        page = await self.session.get(Page, block.page_id)
+        if not page or not page.image_path:
+            raise ValueError("page image not ready")
+        page_image_abs_path = self.storage.resolve_media_path(page.image_path)
+        ocr = self.processor.ocr(str(page_image_abs_path), block.bbox_px)
         block.result = {**(block.result or {}), **ocr}
-        task.output_payload = ocr
+        text = str(ocr.get("text", ""))
+        task.output_payload = {"text": text, "lines": len([line for line in text.splitlines() if line.strip()])}
         await self.session.flush()
 
     async def _recalc_progress(self, file_id: UUID) -> None:
