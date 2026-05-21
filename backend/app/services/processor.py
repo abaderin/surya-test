@@ -5,6 +5,9 @@ from typing import Any
 import fitz
 from pypdf import PdfReader
 
+from app.core.settings import settings
+from app.services.surya import SuryaPredictors
+
 
 @dataclass
 class LayoutBlock:
@@ -27,9 +30,8 @@ class RenderedPage:
 class ProcessorService:
     """Runtime adapter boundary for PDF/page processing."""
 
-    def __init__(self) -> None:
-        self._layout_predictor: Any | None = None
-        self._recognition_predictor: Any | None = None
+    def __init__(self, predictors: SuryaPredictors | None = None) -> None:
+        self.predictors = predictors or SuryaPredictors(settings.storage_root_path / ".gpu-predictor.lock")
 
     def validate_pdf(self, source_path: str) -> int:
         reader = PdfReader(source_path)
@@ -61,11 +63,12 @@ class ProcessorService:
     def layout(self, page_path: str, width: int, height: int) -> list[LayoutBlock]:
         from PIL import Image
 
-        predictor = self._get_layout_predictor()
+        predictor = self.predictors.get_layout_predictor()
 
         with Image.open(page_path) as image:
             rgb_image = image.convert("RGB")
-        layout_results = predictor([rgb_image])
+        with self.predictors.gpu_lock():
+            layout_results = predictor([rgb_image])
         if not layout_results:
             return []
 
@@ -115,17 +118,6 @@ class ProcessorService:
             )
         return blocks
 
-    def _get_layout_predictor(self) -> Any:
-        if self._layout_predictor is not None:
-            return self._layout_predictor
-        from surya.foundation import FoundationPredictor
-        from surya.layout import LayoutPredictor
-        from surya.settings import settings as surya_settings
-
-        foundation = FoundationPredictor(checkpoint=surya_settings.LAYOUT_MODEL_CHECKPOINT)
-        self._layout_predictor = LayoutPredictor(foundation)
-        return self._layout_predictor
-
     def _raw_surya_block(self, box: Any) -> dict:
         if hasattr(box, "model_dump"):
             dumped = box.model_dump(mode="json")
@@ -164,7 +156,7 @@ class ProcessorService:
     def ocr(self, page_path: str, bbox_px: dict) -> dict:
         from PIL import Image
 
-        predictor = self._get_recognition_predictor()
+        predictor = self.predictors.get_recognition_predictor()
         x1 = int(bbox_px["x"])
         y1 = int(bbox_px["y"])
         x2 = int(bbox_px["x"] + bbox_px["width"])
@@ -174,12 +166,13 @@ class ProcessorService:
 
         with Image.open(page_path) as image:
             rgb_image = image.convert("RGB")
-        ocr_results = predictor(
-            [rgb_image],
-            bboxes=[[[x1, y1, x2, y2]]],
-            sort_lines=True,
-            math_mode=True,
-        )
+        with self.predictors.gpu_lock():
+            ocr_results = predictor(
+                [rgb_image],
+                bboxes=[[[x1, y1, x2, y2]]],
+                sort_lines=True,
+                math_mode=True,
+            )
         if not ocr_results:
             return {"text": "", "raw_surya_ocr": []}
 
@@ -190,17 +183,6 @@ class ProcessorService:
             "text": text,
             "raw_surya_ocr": self._raw_surya_ocr(result),
         }
-
-    def _get_recognition_predictor(self) -> Any:
-        if self._recognition_predictor is not None:
-            return self._recognition_predictor
-        from surya.foundation import FoundationPredictor
-        from surya.recognition import RecognitionPredictor
-        from surya.settings import settings as surya_settings
-
-        foundation = FoundationPredictor(checkpoint=surya_settings.RECOGNITION_MODEL_CHECKPOINT)
-        self._recognition_predictor = RecognitionPredictor(foundation)
-        return self._recognition_predictor
 
     def _raw_surya_ocr(self, result: Any) -> Any:
         if hasattr(result, "model_dump"):

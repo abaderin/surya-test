@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 1.0
     worker_stale_after_seconds: int = 120
     worker_task_types: str | None = None
+    cpu_threads: int = 1
     cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
 
     @property
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     def _normalize_storage(self) -> "Settings":
         if self.storage_root is None and self.media_root is not None:
             self.storage_root = self.media_root
+        if self.cpu_threads < 1:
+            raise ValueError("CPU_THREADS must be >= 1")
         return self
 
 

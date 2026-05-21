@@ -15,6 +15,7 @@ async def test_run_once_claims_and_executes_task() -> None:
         poll_seconds=0.01,
         stale_after_seconds=120,
         worker_task_types_set={TaskType.LAYOUT},
+        cpu_threads=1,
     )
 
     await loop._run_once(service)
@@ -31,6 +32,7 @@ async def test_run_once_skips_execute_when_no_task() -> None:
         poll_seconds=0.01,
         stale_after_seconds=120,
         worker_task_types_set={TaskType.OCR},
+        cpu_threads=1,
     )
 
     await loop._run_once(service)

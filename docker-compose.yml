@@ -82,6 +82,7 @@ services:
       STORAGE_ROOT: /app/storage
       WORKER_ENABLED: "false"
       WORKER_TASK_TYPES: validation,render_page,image_extraction,meta_extraction
+      CPU_THREADS: "10"
       CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
     volumes:
       - storage:/app/storage
@@ -102,6 +103,7 @@ services:
       STORAGE_ROOT: /app/storage
       WORKER_ENABLED: "false"
       WORKER_TASK_TYPES: layout
+      CPU_THREADS: "5"
       CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
     volumes:
       - storage:/app/storage
@@ -125,6 +127,7 @@ services:
       STORAGE_ROOT: /app/storage
       WORKER_ENABLED: "false"
       WORKER_TASK_TYPES: ocr
+      CPU_THREADS: "5"
       CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
     volumes:
       - storage:/app/storage

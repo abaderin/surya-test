@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+from contextlib import nullcontext
 
 import pytest
 from pypdf import PdfWriter
@@ -45,8 +46,11 @@ def test_layout_converts_surya_boxes_with_clipping_and_polygon(monkeypatch: pyte
             return [fake_result]
 
     monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
-    p = ProcessorService()
-    monkeypatch.setattr(p, "_get_layout_predictor", lambda: FakePredictor())
+    fake_predictors = SimpleNamespace(
+        get_layout_predictor=lambda: FakePredictor(),
+        gpu_lock=lambda: nullcontext(),
+    )
+    p = ProcessorService(predictors=fake_predictors)
 
     blocks = p.layout("/tmp/page.png", width=1200, height=1600)
 
@@ -100,8 +104,11 @@ def test_ocr_extracts_text_from_recognition_result(monkeypatch: pytest.MonkeyPat
             return [fake_ocr_result]
 
     monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
-    p = ProcessorService()
-    monkeypatch.setattr(p, "_get_recognition_predictor", lambda: FakePredictor())
+    fake_predictors = SimpleNamespace(
+        get_recognition_predictor=lambda: FakePredictor(),
+        gpu_lock=lambda: nullcontext(),
+    )
+    p = ProcessorService(predictors=fake_predictors)
 
     result = p.ocr("/tmp/page.png", {"x": 10, "y": 20, "width": 30, "height": 40})
 

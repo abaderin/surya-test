@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -198,7 +199,7 @@ class TaskService:
         if not file.source_path:
             raise ValueError("source path missing")
         source_abs_path = self.storage.resolve_media_path(file.source_path)
-        pages_count = self.processor.validate_pdf(str(source_abs_path))
+        pages_count = await asyncio.to_thread(self.processor.validate_pdf, str(source_abs_path))
         file.pages_count = pages_count
         file.status = FileStatus.IN_PROGRESS
         file.progress_total = 1 + pages_count * 2
@@ -240,7 +241,13 @@ class TaskService:
         target_rel_path = self.storage.page_image_rel_path(page.file_id, page.page_number, "png")
         target_abs_path = self.storage.resolve_media_path(target_rel_path)
         tmp_abs_path = target_abs_path.with_name(f"{target_abs_path.stem}.tmp{target_abs_path.suffix}")
-        rendered = self.processor.render_page(str(source_abs_path), page.page_number, str(tmp_abs_path), dpi=144)
+        rendered = await asyncio.to_thread(
+            self.processor.render_page,
+            str(source_abs_path),
+            page.page_number,
+            str(tmp_abs_path),
+            144,
+        )
         self.storage.atomic_replace(tmp_abs_path, target_abs_path)
         page.image_path = target_rel_path
         page.width_px = rendered.width_px
@@ -276,7 +283,7 @@ class TaskService:
         page.error_message = None
         await self.session.flush()
         page_image_abs_path = self.storage.resolve_media_path(page.image_path)
-        blocks = self.processor.layout(str(page_image_abs_path), page.width_px, page.height_px)
+        blocks = await asyncio.to_thread(self.processor.layout, str(page_image_abs_path), page.width_px, page.height_px)
         for i, block in enumerate(blocks):
             model = Block(
                 file_id=page.file_id,
@@ -332,7 +339,7 @@ class TaskService:
         if not page or not page.image_path:
             raise ValueError("page image not ready")
         page_image_abs_path = self.storage.resolve_media_path(page.image_path)
-        ocr = self.processor.ocr(str(page_image_abs_path), block.bbox_px)
+        ocr = await asyncio.to_thread(self.processor.ocr, str(page_image_abs_path), block.bbox_px)
         block.result = {**(block.result or {}), **ocr}
         text = str(ocr.get("text", ""))
         task.output_payload = {"text": text, "lines": len([line for line in text.splitlines() if line.strip()])}
@@ -356,7 +363,7 @@ class TaskService:
         artifact_rel_path = self.storage.block_artifact_rel_path(block.file_id, block.id, "png")
         artifact_abs_path = self.storage.resolve_media_path(artifact_rel_path)
         tmp_abs_path = artifact_abs_path.with_name(f"{artifact_abs_path.stem}.tmp{artifact_abs_path.suffix}")
-        extracted = self.processor.image_extraction(str(page_image_abs_path), block.bbox_px, str(tmp_abs_path))
+        extracted = await asyncio.to_thread(self.processor.image_extraction, str(page_image_abs_path), block.bbox_px, str(tmp_abs_path))
         self.storage.atomic_replace(tmp_abs_path, artifact_abs_path)
         block.artifact_path = artifact_rel_path
         block.result = {

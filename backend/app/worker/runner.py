@@ -9,6 +9,7 @@ async def main() -> None:
         poll_seconds=settings.worker_poll_seconds,
         stale_after_seconds=settings.worker_stale_after_seconds,
         worker_task_types_set=settings.worker_task_types_set,
+        cpu_threads=settings.cpu_threads,
     )
     await loop.start()
     try:

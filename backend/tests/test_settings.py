@@ -1,5 +1,6 @@
 from app.core.settings import Settings
 from app.models.enums import TaskType
+import pytest
 
 
 def test_worker_task_types_set_is_none_by_default() -> None:
@@ -19,3 +20,8 @@ def test_worker_task_types_set_parses_multiple_values() -> None:
         TaskType.RENDER_PAGE,
         TaskType.OCR,
     }
+
+
+def test_cpu_threads_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        Settings(cpu_threads=0)

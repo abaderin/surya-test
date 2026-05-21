@@ -9,10 +9,12 @@ from app.db.session import get_session
 from app.services.events import EventBus
 from app.services.processor import ProcessorService
 from app.services.storage import StorageService
+from app.services.surya import SuryaPredictors
 from app.services.task_service import TaskService
 
 _storage = StorageService()
-_processor = ProcessorService()
+_predictors = SuryaPredictors(settings.storage_root_path / ".gpu-predictor.lock")
+_processor = ProcessorService(_predictors)
 _redis: Redis | None = None
 
 
