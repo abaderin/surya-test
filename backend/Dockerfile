@@ -1,8 +1,6 @@
-FROM surya-test:base
+FROM surya-test:surya
 
 WORKDIR /app
 
-COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv sync --frozen --no-dev
-
 COPY backend/ ./
+RUN uv pip install --system .
