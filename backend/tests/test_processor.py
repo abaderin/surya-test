@@ -1,4 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
+import sys
 
 import pytest
 from pypdf import PdfWriter
@@ -6,12 +8,62 @@ from pypdf import PdfWriter
 from app.services.processor import ProcessorService
 
 
-def test_layout_returns_blocks_with_normalized_bbox() -> None:
+def test_layout_converts_surya_boxes_with_clipping_and_polygon(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_box = SimpleNamespace(
+        bbox=[-20.0, 15.0, 1400.0, 200.0],
+        polygon=[[0.0, 15.0], [1200.0, 15.0], [1200.0, 200.0], [0.0, 200.0]],
+        label="Text",
+        position=0,
+        top_k={"Text": 0.9},
+        confidence=0.95,
+    )
+    fake_result = SimpleNamespace(bboxes=[fake_box])
+
+    class FakeImage:
+        size = (1200, 1600)
+
+        def convert(self, mode: str) -> "FakeImage":
+            assert mode == "RGB"
+            return self
+
+        def __enter__(self) -> "FakeImage":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    class FakePILImageModule:
+        @staticmethod
+        def open(path: str) -> FakeImage:
+            assert path == "/tmp/page.png"
+            return FakeImage()
+
+    class FakePredictor:
+        def __call__(self, images: list[FakeImage]) -> list[SimpleNamespace]:
+            assert len(images) == 1
+            assert images[0].size == (1200, 1600)
+            return [fake_result]
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
     p = ProcessorService()
-    blocks = p.layout("dummy", width=1200, height=1600)
-    assert len(blocks) == 3
-    assert blocks[0].bbox_norm["x"] < 1
-    assert blocks[0].bbox_norm["y"] < 1
+    monkeypatch.setattr(p, "_get_layout_predictor", lambda: FakePredictor())
+
+    blocks = p.layout("/tmp/page.png", width=1200, height=1600)
+
+    assert len(blocks) == 1
+    assert blocks[0].block_type == "Text"
+    assert blocks[0].bbox_px == {"x": 0, "y": 15, "width": 1200, "height": 185}
+    assert blocks[0].bbox_norm == {"x": 0.0, "y": 0.009375, "width": 1.0, "height": 0.115625}
+    assert blocks[0].polygon_px == {
+        "points": [
+            {"x": 0.0, "y": 15.0},
+            {"x": 1200.0, "y": 15.0},
+            {"x": 1200.0, "y": 200.0},
+            {"x": 0.0, "y": 200.0},
+        ]
+    }
+    assert blocks[0].confidence == 0.95
+    assert blocks[0].raw["label"] == "Text"
 
 
 def test_ocr_text_for_textual_blocks() -> None:

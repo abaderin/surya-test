@@ -13,7 +13,24 @@ from app.services.events import EventBus
 from app.services.processor import ProcessorService
 from app.services.storage import StorageService
 
-COLOR_MAP = {"text": "blue", "header": "red", "image": "green"}
+COLOR_MAP = {
+    "text": "blue",
+    "listitem": "blue",
+    "code": "blue",
+    "sectionheader": "red",
+    "title": "red",
+    "picture": "green",
+    "figure": "green",
+    "caption": "orange",
+    "pageheader": "gray",
+    "pagefooter": "gray",
+    "table": "purple",
+    "formula": "purple",
+}
+
+
+def color_for_block_type(block_type: str) -> str:
+    return COLOR_MAP.get(block_type.strip().lower(), "gray")
 
 
 class TaskService:
@@ -231,7 +248,8 @@ class TaskService:
             raise ValueError("page not found")
         if not page.image_path or not page.width_px or not page.height_px:
             raise ValueError("page image not ready")
-        blocks = self.processor.layout(page.image_path, page.width_px, page.height_px)
+        page_image_abs_path = self.storage.resolve_media_path(page.image_path)
+        blocks = self.processor.layout(str(page_image_abs_path), page.width_px, page.height_px)
         for i, block in enumerate(blocks):
             model = Block(
                 file_id=page.file_id,
@@ -240,9 +258,9 @@ class TaskService:
                 type=block.block_type,
                 bbox_px=block.bbox_px,
                 bbox_norm=block.bbox_norm,
-                polygon_px=None,
+                polygon_px=block.polygon_px,
                 confidence=block.confidence,
-                color_key=COLOR_MAP.get(block.block_type, "gray"),
+                color_key=color_for_block_type(block.block_type),
                 raw_surya=block.raw,
                 sort_order=i,
             )

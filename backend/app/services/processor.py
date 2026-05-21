@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from random import Random
+from typing import Any
 
 import fitz
 from pypdf import PdfReader
@@ -11,6 +11,7 @@ class LayoutBlock:
     block_type: str
     bbox_px: dict
     bbox_norm: dict
+    polygon_px: dict | None
     confidence: float
     raw: dict
 
@@ -24,10 +25,10 @@ class RenderedPage:
 
 
 class ProcessorService:
-    """Runtime adapter boundary. Surya can replace these internals."""
+    """Runtime adapter boundary for PDF/page processing."""
 
     def __init__(self) -> None:
-        self._rnd = Random(7)
+        self._layout_predictor: Any | None = None
 
     def validate_pdf(self, source_path: str) -> int:
         reader = PdfReader(source_path)
@@ -57,28 +58,107 @@ class ProcessorService:
             )
 
     def layout(self, page_path: str, width: int, height: int) -> list[LayoutBlock]:
-        _ = page_path
+        from PIL import Image
+
+        predictor = self._get_layout_predictor()
+
+        with Image.open(page_path) as image:
+            rgb_image = image.convert("RGB")
+        layout_results = predictor([rgb_image])
+        if not layout_results:
+            return []
+
+        result = layout_results[0]
+        boxes = getattr(result, "bboxes", []) or []
         blocks: list[LayoutBlock] = []
-        for idx, block_type in enumerate(["text", "header", "image"]):
-            x = 20 + idx * 140
-            y = 30 + idx * 110
-            w = 220
-            h = 80
+        for box in boxes:
+            bbox = getattr(box, "bbox", None)
+            if not bbox or len(bbox) < 4:
+                continue
+
+            x1, y1, x2, y2 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+            left = max(0.0, min(float(width), x1))
+            top = max(0.0, min(float(height), y1))
+            right = max(0.0, min(float(width), x2))
+            bottom = max(0.0, min(float(height), y2))
+            if right < left:
+                left, right = right, left
+            if bottom < top:
+                top, bottom = bottom, top
+
+            bbox_width = max(0.0, right - left)
+            bbox_height = max(0.0, bottom - top)
+            block_type = str(getattr(box, "label", "unknown"))
+            polygon = self._polygon_px(getattr(box, "polygon", None))
+            confidence = float(getattr(box, "confidence", 0.0))
+
             blocks.append(
                 LayoutBlock(
                     block_type=block_type,
-                    bbox_px={"x": x, "y": y, "width": w, "height": h},
-                    bbox_norm={
-                        "x": round(x / width, 6),
-                        "y": round(y / height, 6),
-                        "width": round(w / width, 6),
-                        "height": round(h / height, 6),
+                    bbox_px={
+                        "x": int(round(left)),
+                        "y": int(round(top)),
+                        "width": int(round(bbox_width)),
+                        "height": int(round(bbox_height)),
                     },
-                    confidence=round(self._rnd.uniform(0.7, 0.99), 4),
-                    raw={"type": block_type, "bbox": [x, y, x + w, y + h]},
+                    bbox_norm={
+                        "x": round(left / width, 6),
+                        "y": round(top / height, 6),
+                        "width": round(bbox_width / width, 6),
+                        "height": round(bbox_height / height, 6),
+                    },
+                    polygon_px=polygon,
+                    confidence=confidence,
+                    raw=self._raw_surya_block(box),
                 )
             )
         return blocks
+
+    def _get_layout_predictor(self) -> Any:
+        if self._layout_predictor is not None:
+            return self._layout_predictor
+        from surya.foundation import FoundationPredictor
+        from surya.layout import LayoutPredictor
+        from surya.settings import settings as surya_settings
+
+        foundation = FoundationPredictor(checkpoint=surya_settings.LAYOUT_MODEL_CHECKPOINT)
+        self._layout_predictor = LayoutPredictor(foundation)
+        return self._layout_predictor
+
+    def _raw_surya_block(self, box: Any) -> dict:
+        if hasattr(box, "model_dump"):
+            dumped = box.model_dump(mode="json")
+            if isinstance(dumped, dict):
+                return dumped
+        return {
+            "bbox": self._to_json_compatible(getattr(box, "bbox", None)),
+            "polygon": self._to_json_compatible(getattr(box, "polygon", None)),
+            "label": self._to_json_compatible(getattr(box, "label", None)),
+            "position": self._to_json_compatible(getattr(box, "position", None)),
+            "top_k": self._to_json_compatible(getattr(box, "top_k", None)),
+            "confidence": self._to_json_compatible(getattr(box, "confidence", None)),
+        }
+
+    def _polygon_px(self, polygon: Any) -> dict | None:
+        if not polygon:
+            return None
+        points: list[dict[str, float]] = []
+        for point in polygon:
+            if not point or len(point) < 2:
+                continue
+            points.append({"x": float(point[0]), "y": float(point[1])})
+        if not points:
+            return None
+        return {"points": points}
+
+    def _to_json_compatible(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {str(k): self._to_json_compatible(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self._to_json_compatible(v) for v in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
 
     def ocr(self, block_type: str) -> dict:
         if block_type in {"text", "header"}:

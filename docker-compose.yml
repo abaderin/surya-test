@@ -26,7 +26,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     image: surya-test-app:latest
-    command: ["uv", "run", "alembic", "upgrade", "head"]
+    command: ["python", "-m", "alembic", "upgrade", "head"]
     depends_on:
       db:
         condition: service_healthy
@@ -42,7 +42,7 @@ services:
 
   backend:
     image: surya-test-app:latest
-    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     depends_on:
       db:
         condition: service_healthy
@@ -66,7 +66,7 @@ services:
 
   worker:
     image: surya-test-app:latest
-    command: ["uv", "run", "python", "-m", "app.worker.runner"]
+    command: ["python", "-m", "app.worker.runner"]
     depends_on:
       db:
         condition: service_healthy
@@ -86,7 +86,7 @@ services:
 
   layout-worker:
     image: surya-test-app:latest
-    command: ["uv", "run", "python", "-m", "app.worker.runner"]
+    command: ["python", "-m", "app.worker.runner"]
     depends_on:
       db:
         condition: service_healthy
