@@ -261,8 +261,8 @@ function FilePage() {
       {pages.data?.items.map((p: any) => (
         <Card key={p.id} withBorder>
           <Title order={4}>Page {p.page_number}</Title>
-          <Group align="flex-start" grow>
-            <Box className="page-box">
+          <Box className="file-page-layout">
+            <Box className="file-left-column page-box">
               <img className="page-image" src={mediaUrl(p.image_path)} alt={`page-${p.page_number}`} />
               <svg className="overlay" viewBox={`0 0 ${p.width_px ?? 1} ${p.height_px ?? 1}`}>
                 {p.blocks.map((b: any) => (
@@ -281,7 +281,7 @@ function FilePage() {
                 ))}
               </svg>
             </Box>
-            <Stack>
+            <Stack className="file-right-column">
               {p.blocks.map((b: any) => (
                 <Card
                   key={b.id}
@@ -295,7 +295,7 @@ function FilePage() {
                   ) : b.type === "Picture" ? (
                     <Text size="sm">Image pending</Text>
                   ) : b.type === "Text" ? (
-                    <Text size="sm" component="pre" style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    <Text size="sm" className="block-text-content">
                       {typeof b.result?.text === "string" && b.result.text.trim() ? b.result.text : "OCR pending"}
                     </Text>
                   ) : (
@@ -304,7 +304,7 @@ function FilePage() {
                 </Card>
               ))}
             </Stack>
-          </Group>
+          </Box>
         </Card>
       ))}
     </Stack>

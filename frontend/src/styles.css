@@ -8,6 +8,23 @@ body {
   max-width: 520px;
 }
 
+.file-page-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.file-left-column {
+  flex: 0 1 520px;
+  min-width: 280px;
+}
+
+.file-right-column {
+  flex: 1 1 360px;
+  min-width: 0;
+}
+
 .page-image {
   width: 100%;
   display: block;
@@ -23,4 +40,10 @@ body {
 
 .focused {
   border-color: #3b82f6;
+}
+
+.block-text-content {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
