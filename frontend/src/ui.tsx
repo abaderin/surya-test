@@ -290,9 +290,17 @@ function FilePage() {
                   style={{ borderColor: b.color_key, borderWidth: 2 }}
                 >
                   <Text fw={600}>{b.type}</Text>
-                  <Text size="sm" component="pre" style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                    {typeof b.result?.text === "string" && b.result.text.trim() ? b.result.text : "OCR pending"}
-                  </Text>
+                  {b.artifact_path ? (
+                    <img src={mediaUrl(b.artifact_path)} alt={`block-${b.id}`} style={{ maxWidth: "100%", display: "block" }} />
+                  ) : b.type === "Picture" ? (
+                    <Text size="sm">Image pending</Text>
+                  ) : b.type === "Text" ? (
+                    <Text size="sm" component="pre" style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      {typeof b.result?.text === "string" && b.result.text.trim() ? b.result.text : "OCR pending"}
+                    </Text>
+                  ) : (
+                    <Text size="sm">No extracted content</Text>
+                  )}
                 </Card>
               ))}
             </Stack>
