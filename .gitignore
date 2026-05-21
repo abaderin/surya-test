@@ -15,3 +15,9 @@ coverage/
 .#*
 .jupyter
 .local
+.ipython
+.cache
+.bash_history
+.ipynb_checkpoints
+*.pdf
+*.jpg

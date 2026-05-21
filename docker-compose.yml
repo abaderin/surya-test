@@ -104,6 +104,8 @@ services:
     volumes:
       - storage:/app/storage
     gpus: all
+    group_add:
+    - video
 
   jupyter:
     build:
@@ -113,8 +115,8 @@ services:
     ports:
       - "18888:18888"
     volumes:
-      - ./jupyter:/home/jupyter/workspace
-
+      - ./jupyter:/home/jupyter
+    gpus: all
 
   frontend:
     build:

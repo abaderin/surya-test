@@ -1,0 +1,33 @@
+FROM surya-test:cuda
+
+ENV HF_HUB_DISABLE_SYMLINKS_WARNING=1
+ENV HF_HUB_OFFLINE=true
+
+RUN uv pip install --system \
+    surya-ocr==0.17.1 \
+    transformers==4.56.1
+
+RUN python - <<EOF
+from surya.settings import settings
+from surya.foundation import FoundationPredictor
+from surya.detection import DetectionPredictor
+from surya.layout import LayoutPredictor
+from surya.recognition import RecognitionPredictor
+from surya.table_rec import TableRecPredictor
+
+print("detector", settings.DETECTOR_MODEL_CHECKPOINT)
+DetectionPredictor(checkpoint=settings.DETECTOR_MODEL_CHECKPOINT)
+
+print("recognition", settings.RECOGNITION_MODEL_CHECKPOINT)
+rec_fp = FoundationPredictor(checkpoint=settings.RECOGNITION_MODEL_CHECKPOINT)
+RecognitionPredictor(rec_fp)
+
+print("layout", settings.LAYOUT_MODEL_CHECKPOINT)
+layout_fp = FoundationPredictor(checkpoint=settings.LAYOUT_MODEL_CHECKPOINT)
+LayoutPredictor(layout_fp)
+
+print("table", settings.TABLE_REC_MODEL_CHECKPOINT)
+TableRecPredictor(checkpoint=settings.TABLE_REC_MODEL_CHECKPOINT)
+
+print("cache", settings.MODEL_CACHE_DIR)
+EOF
