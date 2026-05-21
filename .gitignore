@@ -12,3 +12,6 @@ dist/
 .env
 storage/
 coverage/
+.#*
+.jupyter
+.local

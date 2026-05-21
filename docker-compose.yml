@@ -105,6 +105,17 @@ services:
       - storage:/app/storage
     gpus: all
 
+  jupyter:
+    build:
+      context: .
+      dockerfile: jupyter/Dockerfile
+    image: surya-test-jupyter:latest
+    ports:
+      - "18888:18888"
+    volumes:
+      - ./jupyter:/home/jupyter/workspace
+
+
   frontend:
     build:
       context: .
