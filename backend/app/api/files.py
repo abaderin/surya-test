@@ -6,12 +6,13 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_event_bus, get_processor, get_storage
+from app.api.deps import get_db, get_storage, get_task_service
 from app.models.block import Block
 from app.models.enums import FileStatus
 from app.models.file import File
 from app.models.page import Page
 from app.schemas.files import BlockRead, FileRead, PageListResponse, PageRead
+from app.services.storage import StorageService
 from app.services.task_service import TaskService
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -21,11 +22,11 @@ router = APIRouter(prefix="/api/files", tags=["files"])
 async def upload_file(
     upload: UploadFile = UploadFileArg(...),
     db: AsyncSession = Depends(get_db),
+    service: TaskService = Depends(get_task_service),
+    storage: StorageService = Depends(get_storage),
 ) -> FileRead:
-    event_bus = await get_event_bus()
-    service = TaskService(db, get_storage(), get_processor(), event_bus)
     file = await service.create_upload(upload.filename or "unknown.pdf", upload.content_type or "application/pdf", 0)
-    source_path, sha256, size_bytes = await get_storage().save_source(file.id, upload)
+    source_path, sha256, size_bytes = await storage.save_source(file.id, upload)
     await service.enqueue_after_upload(file.id, source_path, sha256, size_bytes)
     await db.refresh(file)
     return FileRead.model_validate(file, from_attributes=True)
@@ -54,9 +55,11 @@ async def get_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> FileRea
 
 
 @router.post("/{file_id}/reprocess", response_model=FileRead)
-async def reprocess_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> FileRead:
-    event_bus = await get_event_bus()
-    service = TaskService(db, get_storage(), get_processor(), event_bus)
+async def reprocess_file(
+    file_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    service: TaskService = Depends(get_task_service),
+) -> FileRead:
     try:
         model = await service.reprocess_file(file_id)
     except ValueError as exc:
@@ -68,9 +71,10 @@ async def reprocess_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> F
 
 
 @router.delete("/{file_id}", status_code=204, response_class=Response)
-async def delete_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> Response:
-    event_bus = await get_event_bus()
-    service = TaskService(db, get_storage(), get_processor(), event_bus)
+async def delete_file(
+    file_id: UUID,
+    service: TaskService = Depends(get_task_service),
+) -> Response:
     try:
         await service.delete_file(file_id)
     except ValueError as exc:
@@ -113,9 +117,9 @@ async def list_pages(
     return PageListResponse(total=total, items=items)
 
 
-async def media_file(path: str) -> FileResponse:
+async def media_file(path: str, storage: StorageService) -> FileResponse:
     try:
-        resolved = get_storage().resolve_media_path(path)
+        resolved = storage.resolve_media_path(path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid path") from exc
     if not resolved.exists() or not resolved.is_file():

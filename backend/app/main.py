@@ -13,11 +13,19 @@ from app.worker.loop import WorkerLoop
 worker_loop: WorkerLoop | None = None
 
 
+def build_worker_loop() -> WorkerLoop:
+    return WorkerLoop(
+        poll_seconds=settings.worker_poll_seconds,
+        stale_after_seconds=settings.worker_stale_after_seconds,
+        worker_task_types_set=settings.worker_task_types_set,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global worker_loop
     if settings.worker_enabled:
-        worker_loop = WorkerLoop()
+        worker_loop = build_worker_loop()
         await worker_loop.start()
     yield
     if worker_loop:

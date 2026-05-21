@@ -1,17 +1,29 @@
 import asyncio
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.api.deps import get_event_bus, get_processor, get_storage
-from app.core.settings import settings
-from app.db.session import SessionLocal
+from app.models.enums import TaskType
 from app.services.task_service import TaskService
+from app.worker.deps import task_service_context
+
+TaskServiceContextFactory = Callable[[], AbstractAsyncContextManager[TaskService]]
 
 
 class WorkerLoop:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        poll_seconds: float,
+        stale_after_seconds: int,
+        worker_task_types_set: set[TaskType] | None,
+        task_service_context_factory: TaskServiceContextFactory = task_service_context,
+    ) -> None:
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        self.poll_seconds = poll_seconds
+        self.stale_after_seconds = stale_after_seconds
+        self.worker_task_types_set = worker_task_types_set
+        self.task_service_context_factory = task_service_context_factory
 
     async def start(self) -> None:
         self._stop.clear()
@@ -24,15 +36,11 @@ class WorkerLoop:
 
     async def run(self) -> None:
         while not self._stop.is_set():
-            async with SessionLocal() as session:
-                await self._run_once(session)
-            await asyncio.sleep(settings.worker_poll_seconds)
+            async with self.task_service_context_factory() as service:
+                await self._run_once(service)
+            await asyncio.sleep(self.poll_seconds)
 
-    async def _run_once(self, session: AsyncSession) -> None:
-        service = TaskService(session, get_storage(), get_processor(), await get_event_bus())
-        next_task = await service.claim_next_task(
-            settings.worker_stale_after_seconds,
-            settings.worker_task_types_set,
-        )
-        if next_task:
+    async def _run_once(self, service: TaskService) -> None:
+        next_task = await service.claim_next_task(self.stale_after_seconds, self.worker_task_types_set)
+        if next_task is not None:
             await service.execute_task(next_task)
