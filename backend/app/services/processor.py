@@ -208,7 +208,27 @@ class ProcessorService:
             return self._to_json_compatible(dumped)
         return self._to_json_compatible(result)
 
-    def image_extraction(self, block_type: str) -> dict:
-        if block_type == "image":
-            return {"image_note": "image extraction placeholder"}
-        return {}
+    def image_extraction(self, page_path: str, bbox_px: dict, output_path: str) -> dict:
+        from PIL import Image
+
+        x1 = int(bbox_px["x"])
+        y1 = int(bbox_px["y"])
+        x2 = int(bbox_px["x"] + bbox_px["width"])
+        y2 = int(bbox_px["y"] + bbox_px["height"])
+        if x2 <= x1 or y2 <= y1:
+            raise ValueError("invalid bbox for image extraction")
+
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(page_path) as image:
+            rgb_image = image.convert("RGB")
+            width, height = rgb_image.size
+            left = max(0, min(width, x1))
+            top = max(0, min(height, y1))
+            right = max(0, min(width, x2))
+            bottom = max(0, min(height, y2))
+            if right <= left or bottom <= top:
+                raise ValueError("bbox is outside image bounds")
+            cropped = rgb_image.crop((left, top, right, bottom))
+            cropped.save(target, format="PNG")
+            return {"width_px": int(cropped.width), "height_px": int(cropped.height), "format": "png"}

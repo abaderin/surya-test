@@ -69,3 +69,16 @@ def test_remove_file_resources_removes_originals_pages_and_thumbs(tmp_path: Path
     assert not pages.exists()
     assert not thumbs.exists()
     assert not originals.exists()
+
+
+def test_block_artifact_path_is_inside_blocks_root(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(storage_module.settings, "storage_root", str(tmp_path))
+    service = StorageService()
+    file_id = uuid4()
+    block_id = uuid4()
+
+    rel = service.block_artifact_rel_path(file_id, block_id, ext="png")
+    abs_path = service.resolve_media_path(rel)
+
+    assert rel == f"blocks/{file_id}/{block_id}.png"
+    assert abs_path == tmp_path / rel

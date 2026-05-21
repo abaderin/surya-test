@@ -136,3 +136,51 @@ def test_render_page_fails_for_out_of_range_page(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="out of range"):
         ProcessorService().render_page(str(source), page_number=2, output_path=str(tmp_path / "bad.png"))
+
+
+def test_image_extraction_crops_image_and_returns_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeCrop:
+        width = 30
+        height = 25
+
+        def save(self, path: Path, format: str) -> None:
+            calls["save_path"] = str(path)
+            calls["save_format"] = format
+
+    class FakeImage:
+        size = (100, 80)
+
+        def convert(self, mode: str) -> "FakeImage":
+            assert mode == "RGB"
+            return self
+
+        def crop(self, box: tuple[int, int, int, int]) -> FakeCrop:
+            calls["crop_box"] = box
+            return FakeCrop()
+
+        def __enter__(self) -> "FakeImage":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    class FakePILImageModule:
+        @staticmethod
+        def open(path: str) -> FakeImage:
+            assert path == "/tmp/page.png"
+            return FakeImage()
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
+
+    result = ProcessorService().image_extraction(
+        "/tmp/page.png",
+        {"x": 10, "y": 20, "width": 30, "height": 25},
+        "/tmp/crop.png",
+    )
+
+    assert calls["crop_box"] == (10, 20, 40, 45)
+    assert calls["save_path"] == "/tmp/crop.png"
+    assert calls["save_format"] == "PNG"
+    assert result == {"width_px": 30, "height_px": 25, "format": "png"}

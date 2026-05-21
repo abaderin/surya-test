@@ -37,6 +37,10 @@ def should_enqueue_ocr(block_type: str) -> bool:
     return block_type == "Text"
 
 
+def should_enqueue_image_extraction(block_type: str) -> bool:
+    return block_type == "Picture"
+
+
 class TaskService:
     def __init__(
         self,
@@ -136,7 +140,9 @@ class TaskService:
                 await self._execute_layout(task)
             elif task.type == TaskType.OCR:
                 await self._execute_ocr(task)
-            elif task.type in {TaskType.IMAGE_EXTRACTION, TaskType.META_EXTRACTION}:
+            elif task.type == TaskType.IMAGE_EXTRACTION:
+                await self._execute_image_extraction(task)
+            elif task.type == TaskType.META_EXTRACTION:
                 task.output_payload = {"ok": True}
             task.status = TaskStatus.DONE
             task.finished_at = datetime.now(UTC)
@@ -283,6 +289,16 @@ class TaskService:
                         input_payload={"block_id": str(model.id), "type": model.type},
                     )
                 )
+            if should_enqueue_image_extraction(model.type):
+                self.session.add(
+                    Task(
+                        file_id=page.file_id,
+                        page_id=page.id,
+                        type=TaskType.IMAGE_EXTRACTION,
+                        status=TaskStatus.NEW,
+                        input_payload={"block_id": str(model.id), "type": model.type},
+                    )
+                )
         page.status = PageStatus.DONE
         task.output_payload = {"blocks": len(blocks)}
         await self.session.commit()
@@ -306,6 +322,43 @@ class TaskService:
         block.result = {**(block.result or {}), **ocr}
         text = str(ocr.get("text", ""))
         task.output_payload = {"text": text, "lines": len([line for line in text.splitlines() if line.strip()])}
+        await self.session.flush()
+
+    async def _execute_image_extraction(self, task: Task) -> None:
+        block_id = task.input_payload.get("block_id")
+        if not block_id:
+            task.output_payload = {"skipped": True}
+            return
+        block = await self.session.get(Block, UUID(block_id))
+        if not block:
+            raise ValueError("block not found")
+        if not should_enqueue_image_extraction(block.type):
+            task.output_payload = {"skipped": True, "reason": "unsupported_label"}
+            return
+        page = await self.session.get(Page, block.page_id)
+        if not page or not page.image_path:
+            raise ValueError("page image not ready")
+        page_image_abs_path = self.storage.resolve_media_path(page.image_path)
+        artifact_rel_path = self.storage.block_artifact_rel_path(block.file_id, block.id, "png")
+        artifact_abs_path = self.storage.resolve_media_path(artifact_rel_path)
+        tmp_abs_path = artifact_abs_path.with_name(f"{artifact_abs_path.stem}.tmp{artifact_abs_path.suffix}")
+        extracted = self.processor.image_extraction(str(page_image_abs_path), block.bbox_px, str(tmp_abs_path))
+        self.storage.atomic_replace(tmp_abs_path, artifact_abs_path)
+        block.artifact_path = artifact_rel_path
+        block.result = {
+            **(block.result or {}),
+            "image": {
+                "path": artifact_rel_path,
+                "width_px": extracted["width_px"],
+                "height_px": extracted["height_px"],
+                "format": extracted["format"],
+            },
+        }
+        task.output_payload = {
+            "artifact_path": artifact_rel_path,
+            "width_px": extracted["width_px"],
+            "height_px": extracted["height_px"],
+        }
         await self.session.flush()
 
     async def _recalc_progress(self, file_id: UUID) -> None:

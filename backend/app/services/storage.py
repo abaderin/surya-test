@@ -41,6 +41,11 @@ class StorageService:
     def page_image_abs_path(self, file_id: UUID, page_number: int, ext: str = "png") -> Path:
         return self._abs(self.page_image_rel_path(file_id, page_number, ext))
 
+    def block_artifact_rel_path(self, file_id: UUID, block_id: UUID, ext: str = "png") -> str:
+        directory = self._abs(f"blocks/{file_id}")
+        directory.mkdir(parents=True, exist_ok=True)
+        return str((directory / f"{block_id}.{ext}").relative_to(self.root))
+
     def atomic_replace(self, tmp_path: Path, target_path: Path) -> None:
         tmp_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.parent.mkdir(parents=True, exist_ok=True)

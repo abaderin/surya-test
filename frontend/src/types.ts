@@ -31,6 +31,7 @@ export type BlockItem = {
   color_key: string;
   raw_surya: Record<string, unknown>;
   result: Record<string, unknown> | null;
+  artifact_path: string | null;
 };
 
 export type PageItem = {
