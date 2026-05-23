@@ -71,6 +71,22 @@ async def reprocess_file(
     return FileRead.model_validate(model, from_attributes=True)
 
 
+@router.post("/{file_id}/cancel", response_model=FileRead)
+async def cancel_file(
+    file_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    service: TaskService = Depends(get_task_service),
+) -> FileRead:
+    try:
+        model = await service.cancel_file(file_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await db.refresh(model)
+    return FileRead.model_validate(model, from_attributes=True)
+
+
 @router.delete("/{file_id}", status_code=204, response_class=Response)
 async def delete_file(
     file_id: UUID,

@@ -1,6 +1,8 @@
 import uuid
 
 from app.services.task_service import (
+    FILE_TERMINAL_STATUSES,
+    TASK_TERMINAL_STATUSES,
     _bbox_center,
     _contains_point,
     _intersection_area,
@@ -9,6 +11,7 @@ from app.services.task_service import (
     should_enqueue_image_extraction,
     should_enqueue_ocr,
 )
+from app.models.enums import FileStatus, TaskStatus
 
 
 def test_color_for_block_type_maps_surya_labels() -> None:
@@ -68,3 +71,14 @@ def test_intersection_area_returns_overlap_area() -> None:
     a = {"x": 10, "y": 10, "width": 50, "height": 50}
     b = {"x": 40, "y": 30, "width": 40, "height": 40}
     assert _intersection_area(a, b) == 600.0
+
+
+def test_cancel_statuses_are_available() -> None:
+    assert FileStatus.CANCELLING.value == "cancelling"
+    assert FileStatus.CANCELLED.value == "cancelled"
+    assert TaskStatus.CANCELLED.value == "cancelled"
+
+
+def test_terminal_status_sets_include_cancelled() -> None:
+    assert FileStatus.CANCELLED in FILE_TERMINAL_STATUSES
+    assert TaskStatus.CANCELLED in TASK_TERMINAL_STATUSES

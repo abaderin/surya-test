@@ -8,6 +8,8 @@ class FileStatus(StrEnum):
     VALIDATION = "validation"
     VALIDATION_FAILED = "validation_failed"
     IN_PROGRESS = "in_progress"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
     FAILED = "failed"
     DONE = "done"
 
@@ -15,6 +17,7 @@ class FileStatus(StrEnum):
 class TaskStatus(StrEnum):
     NEW = "new"
     IN_PROGRESS = "in_progress"
+    CANCELLED = "cancelled"
     FAILED = "failed"
     DONE = "done"
 

@@ -30,6 +30,22 @@ COLOR_MAP = {
     "formula": "purple",
 }
 
+FILE_TERMINAL_STATUSES = frozenset(
+    {
+        FileStatus.DONE,
+        FileStatus.FAILED,
+        FileStatus.VALIDATION_FAILED,
+        FileStatus.CANCELLED,
+    }
+)
+TASK_TERMINAL_STATUSES = frozenset(
+    {
+        TaskStatus.DONE,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    }
+)
+
 OCR_BLOCK_TYPES = frozenset(
     {
         "text",
@@ -162,6 +178,22 @@ class TaskService:
             .where(
                 and_(
                     Task.deleted.is_(False),
+                    Task.file_id == File.id,
+                    File.status == FileStatus.CANCELLING,
+                    Task.status == TaskStatus.IN_PROGRESS,
+                    Task.started_at < stale_threshold,
+                    task_type_filter,
+                )
+            )
+            .values(status=TaskStatus.CANCELLED, finished_at=datetime.now(UTC))
+        )
+        await self.session.execute(
+            update(Task)
+            .where(
+                and_(
+                    Task.deleted.is_(False),
+                    Task.file_id == File.id,
+                    File.status.notin_([FileStatus.CANCELLING, FileStatus.CANCELLED]),
                     Task.status == TaskStatus.IN_PROGRESS,
                     Task.started_at < stale_threshold,
                     task_type_filter,
@@ -300,6 +332,18 @@ class TaskService:
         page.height_px = rendered.height_px
         page.status = PageStatus.DONE
         await self.session.flush()
+        if file.status == FileStatus.CANCELLING:
+            task.output_payload = {
+                "image_path": page.image_path,
+                "width_px": rendered.width_px,
+                "height_px": rendered.height_px,
+                "dpi": rendered.dpi,
+                "format": rendered.format,
+                "follow_up_skipped": "file_cancelling",
+            }
+            await self.session.commit()
+            await self._emit(page.file_id, "page.updated", {"page_id": str(page.id), "status": page.status})
+            return
         self.session.add(
             Task(
                 file_id=page.file_id,
@@ -339,6 +383,8 @@ class TaskService:
         await self.session.flush()
         page_image_abs_path = self.storage.resolve_media_path(page.image_path)
         blocks = await asyncio.to_thread(self.processor.layout, str(page_image_abs_path), page.width_px, page.height_px)
+        file = await self.session.get(File, page.file_id)
+        file_is_cancelling = bool(file and file.status == FileStatus.CANCELLING)
         ocr_block_ids: list[str] = []
         for i, block in enumerate(blocks):
             model = Block(
@@ -358,7 +404,7 @@ class TaskService:
             await self.session.flush()
             if should_enqueue_ocr(model.type):
                 ocr_block_ids.append(str(model.id))
-            if should_enqueue_image_extraction(model.type):
+            if not file_is_cancelling and should_enqueue_image_extraction(model.type):
                 self.session.add(
                     Task(
                         file_id=page.file_id,
@@ -368,6 +414,11 @@ class TaskService:
                         input_payload={"block_id": str(model.id), "type": model.type},
                     )
                 )
+        if file_is_cancelling:
+            page.status = PageStatus.DONE
+            task.output_payload = {"blocks": len(blocks), "follow_up_skipped": "file_cancelling"}
+            await self.session.commit()
+            return
         if ocr_block_ids:
             self.session.add(
                 Task(
@@ -525,15 +576,35 @@ class TaskService:
         done = await self.session.scalar(
             select(func.count())
             .select_from(Task)
-            .where(and_(Task.file_id == file_id, Task.deleted.is_(False), Task.status == TaskStatus.DONE))
+            .where(
+                and_(
+                    Task.file_id == file_id,
+                    Task.deleted.is_(False),
+                    Task.status.in_(TASK_TERMINAL_STATUSES),
+                )
+            )
         )
         total = await self.session.scalar(
             select(func.count()).select_from(Task).where(and_(Task.file_id == file_id, Task.deleted.is_(False)))
         )
         file.progress_done = int(done or 0)
         file.progress_total = int(total or 0)
-        if (
-            file.status not in {FileStatus.VALIDATION_FAILED, FileStatus.FAILED}
+        active_count = await self.session.scalar(
+            select(func.count())
+            .select_from(Task)
+            .where(
+                and_(
+                    Task.file_id == file_id,
+                    Task.deleted.is_(False),
+                    Task.status.in_([TaskStatus.NEW, TaskStatus.IN_PROGRESS]),
+                )
+            )
+        )
+        has_active_tasks = int(active_count or 0) > 0
+        if file.status == FileStatus.CANCELLING and not has_active_tasks:
+            file.status = FileStatus.CANCELLED
+        elif (
+            file.status not in {FileStatus.VALIDATION_FAILED, FileStatus.FAILED, FileStatus.CANCELLED}
             and file.progress_total > 0
             and file.progress_done >= file.progress_total
         ):
@@ -553,7 +624,7 @@ class TaskService:
         file = await self.session.get(File, file_id)
         if not file:
             raise ValueError("file not found")
-        if file.status not in {FileStatus.DONE, FileStatus.FAILED, FileStatus.VALIDATION_FAILED}:
+        if file.status not in {FileStatus.DONE, FileStatus.FAILED, FileStatus.VALIDATION_FAILED, FileStatus.CANCELLED}:
             raise RuntimeError("file is being processed")
         if not file.source_path:
             raise RuntimeError("source file is missing")
@@ -592,7 +663,7 @@ class TaskService:
         file = await self.session.get(File, file_id)
         if not file:
             raise ValueError("file not found")
-        if file.status not in {FileStatus.DONE, FileStatus.FAILED, FileStatus.VALIDATION_FAILED}:
+        if file.status not in {FileStatus.DONE, FileStatus.FAILED, FileStatus.VALIDATION_FAILED, FileStatus.CANCELLED}:
             raise RuntimeError("file is being processed")
 
         await self.session.execute(delete(DetectionBox).where(DetectionBox.file_id == file_id))
@@ -603,3 +674,22 @@ class TaskService:
         self.storage.remove_file_resources(file_id)
         await self.session.commit()
         await self._emit(file_id, "file.deleted", {"file_id": str(file_id)})
+
+    async def cancel_file(self, file_id: UUID) -> File:
+        file = await self.session.get(File, file_id)
+        if not file:
+            raise ValueError("file not found")
+        if file.status in FILE_TERMINAL_STATUSES:
+            raise RuntimeError("file is already in terminal status")
+        if file.status != FileStatus.CANCELLING:
+            file.status = FileStatus.CANCELLING
+        now = datetime.now(UTC)
+        await self.session.execute(
+            update(Task)
+            .where(and_(Task.file_id == file_id, Task.deleted.is_(False), Task.status == TaskStatus.NEW))
+            .values(status=TaskStatus.CANCELLED, finished_at=now)
+        )
+        await self.session.commit()
+        await self._recalc_progress(file_id)
+        await self._emit(file_id, "file.updated", {"status": file.status})
+        return file

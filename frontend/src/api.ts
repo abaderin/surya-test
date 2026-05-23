@@ -46,6 +46,12 @@ export async function reprocessFile(fileId: string): Promise<FileItem> {
   return res.json();
 }
 
+export async function cancelFile(fileId: string): Promise<FileItem> {
+  const res = await fetch(`${API_BASE}/files/${fileId}/cancel`, { method: "POST" });
+  if (!res.ok) throw new Error("failed to cancel file");
+  return res.json();
+}
+
 export async function deleteFile(fileId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/files/${fileId}`, { method: "DELETE" });
   if (!res.ok) throw new Error("failed to delete file");

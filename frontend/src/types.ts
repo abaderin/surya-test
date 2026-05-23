@@ -3,10 +3,12 @@ export type FileStatus =
   | "validation"
   | "validation_failed"
   | "in_progress"
+  | "cancelling"
+  | "cancelled"
   | "failed"
   | "done";
 
-export type TaskStatus = "new" | "in_progress" | "failed" | "done";
+export type TaskStatus = "new" | "in_progress" | "cancelled" | "failed" | "done";
 
 export type FileItem = {
   id: string;
