@@ -10,6 +10,7 @@ async def main() -> None:
         stale_after_seconds=settings.worker_stale_after_seconds,
         worker_task_types_set=settings.worker_task_types_set,
         cpu_threads=settings.cpu_threads,
+        batch_size=settings.batch_size,
     )
     await loop.start()
     try:

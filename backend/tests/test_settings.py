@@ -28,6 +28,16 @@ def test_cpu_threads_must_be_positive() -> None:
         Settings(cpu_threads=0)
 
 
+def test_batch_size_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        Settings(batch_size=0)
+
+
+def test_batch_size_is_one_by_default() -> None:
+    settings = Settings()
+    assert settings.batch_size == 1
+
+
 def test_page_render_dpi_defaults_to_notebook_resolution() -> None:
     settings = Settings()
     assert settings.page_render_dpi == 300

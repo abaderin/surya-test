@@ -17,6 +17,7 @@ class WorkerLoop:
         stale_after_seconds: int,
         worker_task_types_set: set[TaskType] | None,
         cpu_threads: int,
+        batch_size: int = 1,
         task_service_context_factory: TaskServiceContextFactory = task_service_context,
     ) -> None:
         self._tasks: list[asyncio.Task] = []
@@ -25,6 +26,7 @@ class WorkerLoop:
         self.stale_after_seconds = stale_after_seconds
         self.worker_task_types_set = worker_task_types_set
         self.cpu_threads = cpu_threads
+        self.batch_size = batch_size
         self.task_service_context_factory = task_service_context_factory
 
     async def start(self) -> None:
@@ -44,6 +46,15 @@ class WorkerLoop:
             await asyncio.sleep(self.poll_seconds)
 
     async def _run_once(self, service: TaskService) -> None:
+        if self.batch_size > 1 and self.worker_task_types_set == {TaskType.LAYOUT}:
+            tasks = await service.claim_next_tasks(
+                self.stale_after_seconds,
+                self.worker_task_types_set,
+                limit=self.batch_size,
+            )
+            if tasks:
+                await service.execute_layout_tasks(tasks)
+            return
         next_task = await service.claim_next_task(self.stale_after_seconds, self.worker_task_types_set)
         if next_task is not None:
             await service.execute_task(next_task)

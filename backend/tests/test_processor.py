@@ -70,6 +70,65 @@ def test_layout_converts_surya_boxes_with_clipping_and_polygon(monkeypatch: pyte
     assert blocks[0].raw["label"] == "Text"
 
 
+def test_layout_many_batches_images_in_single_predictor_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    first_box = SimpleNamespace(
+        bbox=[0.0, 0.0, 20.0, 10.0],
+        polygon=[[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]],
+        label="PageHeader",
+        position=0,
+        top_k={"PageHeader": 0.8},
+        confidence=0.8,
+    )
+    second_box = SimpleNamespace(
+        bbox=[3.0, 4.0, 30.0, 14.0],
+        polygon=[[3.0, 4.0], [30.0, 4.0], [30.0, 14.0], [3.0, 14.0]],
+        label="Text",
+        position=0,
+        top_k={"Text": 0.9},
+        confidence=0.9,
+    )
+    fake_results = [SimpleNamespace(bboxes=[first_box]), SimpleNamespace(bboxes=[second_box])]
+
+    class FakeImage:
+        def __init__(self, size: tuple[int, int]) -> None:
+            self.size = size
+
+        def convert(self, mode: str) -> "FakeImage":
+            assert mode == "RGB"
+            return self
+
+        def __enter__(self) -> "FakeImage":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    class FakePILImageModule:
+        @staticmethod
+        def open(path: str) -> FakeImage:
+            if path == "/tmp/one.png":
+                return FakeImage((120, 200))
+            assert path == "/tmp/two.png"
+            return FakeImage((140, 220))
+
+    class FakePredictor:
+        def __call__(self, images: list[FakeImage]) -> list[SimpleNamespace]:
+            assert len(images) == 2
+            assert images[0].size == (120, 200)
+            assert images[1].size == (140, 220)
+            return fake_results
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
+    fake_predictors = SimpleNamespace(get_layout_predictor=lambda: FakePredictor())
+    p = ProcessorService(predictors=fake_predictors)
+
+    blocks_batch = p.layout_many([("/tmp/one.png", 120, 200), ("/tmp/two.png", 140, 220)])
+
+    assert len(blocks_batch) == 2
+    assert blocks_batch[0][0].block_type == "PageHeader"
+    assert blocks_batch[1][0].block_type == "Text"
+
+
 def test_detection_converts_surya_boxes_with_clipping_and_polygon(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_box = SimpleNamespace(
         bbox=[-10.0, 8.0, 150.0, 52.0],

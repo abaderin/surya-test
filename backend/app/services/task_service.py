@@ -168,6 +168,19 @@ class TaskService:
         stale_after_seconds: int,
         allowed_types: set[TaskType] | None = None,
     ) -> Task | None:
+        tasks = await self.claim_next_tasks(stale_after_seconds, allowed_types, limit=1)
+        if not tasks:
+            return None
+        return tasks[0]
+
+    async def claim_next_tasks(
+        self,
+        stale_after_seconds: int,
+        allowed_types: set[TaskType] | None = None,
+        limit: int = 1,
+    ) -> list[Task]:
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
         stale_threshold = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
         task_type_filter = (
             Task.type.in_(allowed_types)
@@ -208,17 +221,19 @@ class TaskService:
             select(Task)
             .where(and_(Task.deleted.is_(False), Task.status == TaskStatus.NEW, task_type_filter))
             .order_by(Task.created_at)
-            .limit(1)
+            .limit(limit)
             .with_for_update(skip_locked=True)
         )
-        task = result.scalar_one_or_none()
-        if not task:
-            return None
-        task.status = TaskStatus.IN_PROGRESS
-        task.started_at = datetime.now(UTC)
-        task.attempts += 1
+        tasks = result.scalars().all()
+        if not tasks:
+            return []
+        started_at = datetime.now(UTC)
+        for task in tasks:
+            task.status = TaskStatus.IN_PROGRESS
+            task.started_at = started_at
+            task.attempts += 1
         await self.session.commit()
-        return task
+        return tasks
 
     async def execute_task(self, task: Task) -> None:
         if task.deleted:
@@ -262,6 +277,134 @@ class TaskService:
                     await self.session.commit()
             if task.file_id:
                 await self._emit(task.file_id, "task.updated", {"task_id": str(task.id), "status": task.status})
+
+    async def execute_layout_tasks(self, tasks: list[Task]) -> None:
+        if not tasks:
+            return
+        valid: list[tuple[Task, Page, bool, str, int, int]] = []
+        failed_file_ids: set[UUID] = set()
+        completed_file_ids: set[UUID] = set()
+        now = datetime.now(UTC)
+        for task in tasks:
+            if task.deleted:
+                continue
+            try:
+                page = await self.session.get(Page, task.page_id)
+                if not page:
+                    raise ValueError("page not found")
+                if not page.image_path or not page.width_px or not page.height_px:
+                    raise ValueError("page image not ready")
+                if task.type != TaskType.LAYOUT:
+                    raise ValueError("layout batch accepts layout tasks only")
+                page.status = PageStatus.IN_PROGRESS
+                page.error_message = None
+                file = await self.session.get(File, page.file_id)
+                file_is_cancelling = bool(file and file.status == FileStatus.CANCELLING)
+                page_image_abs_path = self.storage.resolve_media_path(page.image_path)
+                valid.append(
+                    (
+                        task,
+                        page,
+                        file_is_cancelling,
+                        str(page_image_abs_path),
+                        page.width_px,
+                        page.height_px,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                task.status = TaskStatus.FAILED
+                task.error_message = str(exc)
+                task.finished_at = now
+                if task.page_id:
+                    page = await self.session.get(Page, task.page_id)
+                    if page:
+                        page.status = PageStatus.FAILED
+                        page.error_message = str(exc)
+                if task.file_id:
+                    failed_file_ids.add(task.file_id)
+                    await self._emit(task.file_id, "task.updated", {"task_id": str(task.id), "status": task.status})
+        await self.session.flush()
+        if not valid:
+            await self.session.commit()
+            for file_id in failed_file_ids:
+                await self._recalc_progress(file_id)
+            return
+
+        try:
+            batch_blocks = await asyncio.to_thread(
+                self.processor.layout_many,
+                [(path, width, height) for _, _, _, path, width, height in valid],
+            )
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            for task, page, *_ in valid:
+                task.status = TaskStatus.FAILED
+                task.error_message = message
+                task.finished_at = now
+                page.status = PageStatus.FAILED
+                page.error_message = message
+                if task.file_id:
+                    failed_file_ids.add(task.file_id)
+                    await self._emit(task.file_id, "task.updated", {"task_id": str(task.id), "status": task.status})
+            await self.session.commit()
+            for file_id in failed_file_ids:
+                await self._recalc_progress(file_id)
+            return
+
+        for (task, page, file_is_cancelling, _, _, _), blocks in zip(valid, batch_blocks, strict=True):
+            ocr_block_ids: list[str] = []
+            for i, block in enumerate(blocks):
+                model = Block(
+                    file_id=page.file_id,
+                    page_id=page.id,
+                    page_number=page.page_number,
+                    type=block.block_type,
+                    bbox_px=block.bbox_px,
+                    bbox_norm=block.bbox_norm,
+                    polygon_px=block.polygon_px,
+                    confidence=block.confidence,
+                    color_key=color_for_block_type(block.block_type),
+                    raw_surya=block.raw,
+                    sort_order=i,
+                )
+                self.session.add(model)
+                await self.session.flush()
+                if should_enqueue_ocr(model.type):
+                    ocr_block_ids.append(str(model.id))
+                if not file_is_cancelling and should_enqueue_image_extraction(model.type):
+                    self.session.add(
+                        Task(
+                            file_id=page.file_id,
+                            page_id=page.id,
+                            type=TaskType.IMAGE_EXTRACTION,
+                            status=TaskStatus.NEW,
+                            input_payload={"block_id": str(model.id), "type": model.type},
+                        )
+                    )
+
+            if file_is_cancelling:
+                page.status = PageStatus.DONE
+                task.output_payload = {"blocks": len(blocks), "follow_up_skipped": "file_cancelling"}
+            else:
+                if ocr_block_ids:
+                    self.session.add(
+                        Task(
+                            file_id=page.file_id,
+                            page_id=page.id,
+                            type=TaskType.OCR,
+                            status=TaskStatus.NEW,
+                            input_payload={"block_ids": ocr_block_ids},
+                        )
+                    )
+                page.status = PageStatus.DONE
+                task.output_payload = {"blocks": len(blocks)}
+            task.status = TaskStatus.DONE
+            task.finished_at = datetime.now(UTC)
+            completed_file_ids.add(page.file_id)
+
+        await self.session.commit()
+        for file_id in failed_file_ids | completed_file_ids:
+            await self._recalc_progress(file_id)
 
     async def _execute_validation(self, task: Task) -> None:
         if not task.file_id:

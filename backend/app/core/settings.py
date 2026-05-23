@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     worker_stale_after_seconds: int = 120
     worker_task_types: str | None = None
     cpu_threads: int = 1
+    batch_size: int = 1
     page_render_dpi: int = 300
     cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
 
@@ -46,6 +47,8 @@ class Settings(BaseSettings):
             self.storage_root = self.media_root
         if self.cpu_threads < 1:
             raise ValueError("CPU_THREADS must be >= 1")
+        if self.batch_size < 1:
+            raise ValueError("BATCH_SIZE must be >= 1")
         if self.page_render_dpi < 72:
             raise ValueError("PAGE_RENDER_DPI must be >= 72")
         return self

@@ -70,17 +70,32 @@ class ProcessorService:
             )
 
     def layout(self, page_path: str, width: int, height: int) -> list[LayoutBlock]:
+        return self.layout_many([(page_path, width, height)])[0]
+
+    def layout_many(self, pages: list[tuple[str, int, int]]) -> list[list[LayoutBlock]]:
+        if not pages:
+            return []
         from PIL import Image
 
         predictor = self.predictors.get_layout_predictor()
-
-        with Image.open(page_path) as image:
-            rgb_image = image.convert("RGB")
-        layout_results = predictor([rgb_image])
+        rgb_images: list[Any] = []
+        dimensions: list[tuple[int, int]] = []
+        for page_path, width, height in pages:
+            with Image.open(page_path) as image:
+                rgb_images.append(image.convert("RGB"))
+            dimensions.append((width, height))
+        layout_results = predictor(rgb_images)
         if not layout_results:
-            return []
+            return [[] for _ in pages]
+        if len(layout_results) != len(pages):
+            raise ValueError("layout predictor returned unexpected number of results")
 
-        result = layout_results[0]
+        return [
+            self._layout_blocks_from_result(result, width=width, height=height)
+            for result, (width, height) in zip(layout_results, dimensions, strict=True)
+        ]
+
+    def _layout_blocks_from_result(self, result: Any, width: int, height: int) -> list[LayoutBlock]:
         boxes = getattr(result, "bboxes", []) or []
         blocks: list[LayoutBlock] = []
         for box in boxes:
