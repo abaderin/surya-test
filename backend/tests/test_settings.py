@@ -26,3 +26,13 @@ def test_worker_task_types_set_parses_multiple_values() -> None:
 def test_cpu_threads_must_be_positive() -> None:
     with pytest.raises(ValueError):
         Settings(cpu_threads=0)
+
+
+def test_page_render_dpi_defaults_to_notebook_resolution() -> None:
+    settings = Settings()
+    assert settings.page_render_dpi == 300
+
+
+def test_page_render_dpi_must_not_be_too_low() -> None:
+    with pytest.raises(ValueError):
+        Settings(page_render_dpi=71)

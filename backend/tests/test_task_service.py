@@ -1,5 +1,14 @@
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+import app.services.task_service as task_service_module
+from app.models.enums import FileStatus, PageStatus, TaskStatus, TaskType
+from app.models.file import File
+from app.models.page import Page
+from app.models.task import Task
 from app.services.task_service import (
     FILE_TERMINAL_STATUSES,
     TASK_TERMINAL_STATUSES,
@@ -11,7 +20,55 @@ from app.services.task_service import (
     should_enqueue_image_extraction,
     should_enqueue_ocr,
 )
-from app.models.enums import FileStatus, TaskStatus
+
+
+class FakeRenderSession:
+    def __init__(self, file: File, page: Page) -> None:
+        self.file = file
+        self.page = page
+        self.added: list[object] = []
+        self.commits = 0
+        self.flushes = 0
+
+    async def get(self, model, id):
+        if model is Page and id == self.page.id:
+            return self.page
+        if model is File and id == self.file.id:
+            return self.file
+        return None
+
+    def add(self, item: object) -> None:
+        self.added.append(item)
+
+    async def flush(self) -> None:
+        self.flushes += 1
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+class FakeRenderStorage:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.replaced: tuple[Path, Path] | None = None
+
+    def resolve_media_path(self, rel_path: str) -> Path:
+        return self.root / rel_path
+
+    def page_image_rel_path(self, file_id: uuid.UUID, page_number: int, ext: str) -> str:
+        return f"pages/{file_id}/{page_number}.{ext}"
+
+    def atomic_replace(self, source: Path, target: Path) -> None:
+        self.replaced = (source, target)
+
+
+class FakeRenderProcessor:
+    def __init__(self) -> None:
+        self.call: tuple[str, int, str, int] | None = None
+
+    def render_page(self, source_path: str, page_number: int, output_path: str, dpi: int):
+        self.call = (source_path, page_number, output_path, dpi)
+        return SimpleNamespace(width_px=2550, height_px=3300, dpi=dpi, format="png")
 
 
 def test_color_for_block_type_maps_surya_labels() -> None:
@@ -82,3 +139,41 @@ def test_cancel_statuses_are_available() -> None:
 def test_terminal_status_sets_include_cancelled() -> None:
     assert FileStatus.CANCELLED in FILE_TERMINAL_STATUSES
     assert TaskStatus.CANCELLED in TASK_TERMINAL_STATUSES
+
+
+@pytest.mark.asyncio
+async def test_execute_render_uses_configured_page_render_dpi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(task_service_module.settings, "page_render_dpi", 300)
+    file = File(
+        id=uuid.uuid4(),
+        filename="book.pdf",
+        content_type="application/pdf",
+        size_bytes=100,
+        status=FileStatus.IN_PROGRESS,
+        source_path="originals/book.pdf",
+        progress_done=0,
+        progress_total=3,
+    )
+    page = Page(id=uuid.uuid4(), file_id=file.id, page_number=11, status=PageStatus.NEW)
+    task = Task(
+        id=uuid.uuid4(),
+        file_id=file.id,
+        page_id=page.id,
+        type=TaskType.RENDER_PAGE,
+        status=TaskStatus.IN_PROGRESS,
+        input_payload={"page_number": page.page_number},
+    )
+    session = FakeRenderSession(file, page)
+    storage = FakeRenderStorage(tmp_path)
+    processor = FakeRenderProcessor()
+    service = task_service_module.TaskService(session, storage, processor)
+
+    await service._execute_render(task)
+
+    assert processor.call is not None
+    assert processor.call[3] == 300
+    assert page.width_px == 2550
+    assert page.height_px == 3300
+    assert page.image_path == f"pages/{file.id}/11.png"
+    assert task.output_payload["dpi"] == 300
+    assert [item.type for item in session.added if isinstance(item, Task)] == [TaskType.LAYOUT, TaskType.DETECTION]

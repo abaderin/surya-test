@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.settings import settings
 from app.models.block import Block
 from app.models.detection_box import DetectionBox
 from app.models.enums import FileStatus, PageStatus, TaskStatus, TaskType
@@ -324,7 +325,7 @@ class TaskService:
             str(source_abs_path),
             page.page_number,
             str(tmp_abs_path),
-            144,
+            settings.page_render_dpi,
         )
         self.storage.atomic_replace(tmp_abs_path, target_abs_path)
         page.image_path = target_rel_path
