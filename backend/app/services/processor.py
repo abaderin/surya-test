@@ -153,73 +153,78 @@ class ProcessorService:
             return value
         return str(value)
 
-    def ocr(self, page_path: str, bbox_px: dict) -> dict:
-        results = self.ocr_many(page_path, [bbox_px])
-        if not results:
-            return {"text": "", "raw_surya_ocr": []}
-        return results[0]
-
-    def ocr_many(self, page_path: str, bboxes_px: list[dict]) -> list[dict]:
+    def ocr_page(self, page_path: str) -> list[dict]:
         from PIL import Image
 
         predictor = self.predictors.get_recognition_predictor()
-        normalized_boxes: list[tuple[int, int, int, int] | None] = []
-        for bbox_px in bboxes_px:
-            x1 = int(bbox_px["x"])
-            y1 = int(bbox_px["y"])
-            x2 = int(bbox_px["x"] + bbox_px["width"])
-            y2 = int(bbox_px["y"] + bbox_px["height"])
-            if x2 <= x1 or y2 <= y1:
-                normalized_boxes.append(None)
-                continue
-            normalized_boxes.append((x1, y1, x2, y2))
-        valid_boxes = [box for box in normalized_boxes if box is not None]
-        if not valid_boxes:
-            return [{"text": "", "raw_surya_ocr": []} for _ in bboxes_px]
-
+        det_predictor = self.predictors.get_detection_predictor()
         with Image.open(page_path) as image:
             rgb_image = image.convert("RGB")
         with self.predictors.gpu_lock():
             ocr_results = predictor(
-                [rgb_image for _ in valid_boxes],
-                bboxes=[[[x1, y1, x2, y2]] for x1, y1, x2, y2 in valid_boxes],
+                [rgb_image],
+                det_predictor=det_predictor,
                 sort_lines=True,
                 math_mode=True,
             )
-        extracted_valid_results: list[dict] = []
-        for result in ocr_results or []:
+        if not ocr_results:
+            return []
+        lines: list[dict] = []
+        for result in ocr_results:
             text_lines = getattr(result, "text_lines", []) or []
-            text = "\n".join(
-                str(getattr(line, "text", "")).strip()
-                for line in text_lines
-                if str(getattr(line, "text", "")).strip()
-            )
-            extracted_valid_results.append(
-                {
-                    "text": text,
-                    "raw_surya_ocr": self._raw_surya_ocr(result),
-                }
-            )
-        if len(extracted_valid_results) < len(valid_boxes):
-            extracted_valid_results.extend(
-                [{"text": "", "raw_surya_ocr": []} for _ in range(len(valid_boxes) - len(extracted_valid_results))]
-            )
+            for text_line in text_lines:
+                raw_text = str(getattr(text_line, "text", "")).strip()
+                if not raw_text:
+                    continue
+                bbox = self._line_bbox(getattr(text_line, "bbox", None), getattr(text_line, "polygon", None))
+                if bbox is None:
+                    continue
+                lines.append(
+                    {
+                        "text": raw_text,
+                        "bbox_px": bbox,
+                        "polygon_px": self._polygon_px(getattr(text_line, "polygon", None)),
+                        "confidence": self._to_json_compatible(getattr(text_line, "confidence", None)),
+                        "raw_surya_ocr": self._to_json_compatible(
+                            text_line.model_dump(mode="json")
+                            if hasattr(text_line, "model_dump")
+                            else text_line
+                        ),
+                    }
+                )
+        return lines
 
-        output: list[dict] = []
-        valid_index = 0
-        for box in normalized_boxes:
-            if box is None:
-                output.append({"text": "", "raw_surya_ocr": []})
-            else:
-                output.append(extracted_valid_results[valid_index])
-                valid_index += 1
-        return output
-
-    def _raw_surya_ocr(self, result: Any) -> Any:
-        if hasattr(result, "model_dump"):
-            dumped = result.model_dump(mode="json")
-            return self._to_json_compatible(dumped)
-        return self._to_json_compatible(result)
+    def _line_bbox(self, bbox: Any, polygon: Any) -> dict | None:
+        if bbox and len(bbox) >= 4:
+            x1, y1, x2, y2 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+            left, right = min(x1, x2), max(x1, x2)
+            top, bottom = min(y1, y2), max(y1, y2)
+            if right <= left or bottom <= top:
+                return None
+            return {
+                "x": int(round(left)),
+                "y": int(round(top)),
+                "width": int(round(right - left)),
+                "height": int(round(bottom - top)),
+            }
+        polygon_px = self._polygon_px(polygon)
+        if not polygon_px:
+            return None
+        points = polygon_px["points"]
+        xs = [point["x"] for point in points]
+        ys = [point["y"] for point in points]
+        left = min(xs)
+        right = max(xs)
+        top = min(ys)
+        bottom = max(ys)
+        if right <= left or bottom <= top:
+            return None
+        return {
+            "x": int(round(left)),
+            "y": int(round(top)),
+            "width": int(round(right - left)),
+            "height": int(round(bottom - top)),
+        }
 
     def image_extraction(self, page_path: str, bbox_px: dict, output_path: str) -> dict:
         from PIL import Image

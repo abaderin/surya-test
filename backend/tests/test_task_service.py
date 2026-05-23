@@ -1,6 +1,9 @@
 import uuid
 
 from app.services.task_service import (
+    _bbox_center,
+    _contains_point,
+    _intersection_area,
     color_for_block_type,
     ocr_block_ids_from_payload,
     should_enqueue_image_extraction,
@@ -49,3 +52,19 @@ def test_ocr_block_ids_from_payload_supports_new_block_ids() -> None:
 def test_ocr_block_ids_from_payload_supports_legacy_block_id() -> None:
     value = uuid.uuid4()
     assert ocr_block_ids_from_payload({"block_id": str(value)}) == [value]
+
+
+def test_bbox_center_returns_midpoint() -> None:
+    assert _bbox_center({"x": 10, "y": 20, "width": 30, "height": 40}) == (25.0, 40.0)
+
+
+def test_contains_point_accepts_inside_and_rejects_outside() -> None:
+    bbox = {"x": 10, "y": 20, "width": 30, "height": 40}
+    assert _contains_point(bbox, 20.0, 30.0) is True
+    assert _contains_point(bbox, 200.0, 300.0) is False
+
+
+def test_intersection_area_returns_overlap_area() -> None:
+    a = {"x": 10, "y": 10, "width": 50, "height": 50}
+    b = {"x": 40, "y": 30, "width": 40, "height": 40}
+    assert _intersection_area(a, b) == 600.0

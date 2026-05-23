@@ -66,6 +66,39 @@ def ocr_block_ids_from_payload(payload: dict) -> list[UUID]:
     return []
 
 
+def _bbox_center(bbox_px: dict) -> tuple[float, float]:
+    return (
+        float(bbox_px["x"]) + float(bbox_px["width"]) / 2.0,
+        float(bbox_px["y"]) + float(bbox_px["height"]) / 2.0,
+    )
+
+
+def _contains_point(bbox_px: dict, x: float, y: float) -> bool:
+    left = float(bbox_px["x"])
+    top = float(bbox_px["y"])
+    right = left + float(bbox_px["width"])
+    bottom = top + float(bbox_px["height"])
+    return left <= x <= right and top <= y <= bottom
+
+
+def _intersection_area(a: dict, b: dict) -> float:
+    ax1 = float(a["x"])
+    ay1 = float(a["y"])
+    ax2 = ax1 + float(a["width"])
+    ay2 = ay1 + float(a["height"])
+    bx1 = float(b["x"])
+    by1 = float(b["y"])
+    bx2 = bx1 + float(b["width"])
+    by2 = by1 + float(b["height"])
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    return (ix2 - ix1) * (iy2 - iy1)
+
+
 class TaskService:
     def __init__(
         self,
@@ -356,21 +389,53 @@ class TaskService:
         if not page or not page.image_path:
             raise ValueError("page image not ready")
         page_image_abs_path = self.storage.resolve_media_path(page.image_path)
-        ocr_results = await asyncio.to_thread(
-            self.processor.ocr_many,
-            str(page_image_abs_path),
-            [block.bbox_px for block in ocr_blocks],
-        )
+        ocr_lines = await asyncio.to_thread(self.processor.ocr_page, str(page_image_abs_path))
+
+        grouped_lines: dict[UUID, list[dict]] = {block.id: [] for block in ocr_blocks}
+        unassigned_lines = 0
+        for line in ocr_lines:
+            line_bbox = line.get("bbox_px")
+            if not isinstance(line_bbox, dict):
+                continue
+            cx, cy = _bbox_center(line_bbox)
+            target_block: Block | None = None
+            for block in ocr_blocks:
+                if _contains_point(block.bbox_px, cx, cy):
+                    target_block = block
+                    break
+            if target_block is None:
+                best_score = 0.0
+                for block in ocr_blocks:
+                    score = _intersection_area(block.bbox_px, line_bbox)
+                    if score > best_score:
+                        best_score = score
+                        target_block = block
+            if target_block is None:
+                unassigned_lines += 1
+                continue
+            grouped_lines[target_block.id].append(line)
+
         total_lines = 0
         with_text = 0
-        for block, ocr in zip(ocr_blocks, ocr_results, strict=False):
-            block.result = {**(block.result or {}), **ocr}
-            text = str(ocr.get("text", ""))
-            lines_count = len([line for line in text.splitlines() if line.strip()])
-            total_lines += lines_count
-            if text.strip():
+        for block in ocr_blocks:
+            lines = grouped_lines[block.id]
+            text_values = [str(line.get("text", "")).strip() for line in lines if str(line.get("text", "")).strip()]
+            text = "\n".join(text_values)
+            total_lines += len(text_values)
+            if text:
                 with_text += 1
-        task.output_payload = {"blocks": len(ocr_blocks), "text_blocks": with_text, "lines": total_lines}
+            block.result = {
+                **(block.result or {}),
+                "text": text,
+                "lines": lines,
+                "raw_surya_ocr": [line.get("raw_surya_ocr") for line in lines],
+            }
+        task.output_payload = {
+            "blocks": len(ocr_blocks),
+            "text_blocks": with_text,
+            "lines": total_lines,
+            "unassigned_lines": unassigned_lines,
+        }
         await self.session.flush()
 
     async def _execute_image_extraction(self, task: Task) -> None:

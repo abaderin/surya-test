@@ -9,8 +9,10 @@ class SuryaPredictors:
     def __init__(self, lock_file: Path) -> None:
         self._layout_predictor: Any | None = None
         self._recognition_predictor: Any | None = None
+        self._detection_predictor: Any | None = None
         self._layout_init_lock = Lock()
         self._recognition_init_lock = Lock()
+        self._detection_init_lock = Lock()
         self._lock_file = lock_file
 
     def get_layout_predictor(self) -> Any:
@@ -38,6 +40,17 @@ class SuryaPredictors:
                 foundation = FoundationPredictor(checkpoint=surya_settings.RECOGNITION_MODEL_CHECKPOINT)
                 self._recognition_predictor = RecognitionPredictor(foundation)
         return self._recognition_predictor
+
+    def get_detection_predictor(self) -> Any:
+        if self._detection_predictor is not None:
+            return self._detection_predictor
+        with self._detection_init_lock:
+            if self._detection_predictor is None:
+                from surya.detection import DetectionPredictor
+                from surya.settings import settings as surya_settings
+
+                self._detection_predictor = DetectionPredictor(checkpoint=surya_settings.DETECTOR_MODEL_CHECKPOINT)
+        return self._detection_predictor
 
     @contextlib.contextmanager
     def gpu_lock(self):
