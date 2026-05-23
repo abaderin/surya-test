@@ -69,3 +69,4 @@ Click on tasks page element leads to task page where input and output params cou
 - Tests must succeed after task implementation, otherwise task is not counted as finished.
 - Tests logic must mirror busyness logic, dont adjust to the solution - it is disallowed
 - Unused code must be removed
+- After every change do commit and push into current branch

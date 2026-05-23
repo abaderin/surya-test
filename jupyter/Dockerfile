@@ -1,4 +1,4 @@
-FROM surya-test:base
+FROM surya-test:surya
 RUN groupadd --gid 1000 jupyter \
     && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/jupyter --shell /bin/bash jupyter
 RUN usermod -aG sudo jupyter
