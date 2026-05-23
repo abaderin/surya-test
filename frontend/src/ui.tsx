@@ -17,7 +17,7 @@ import { Link, Route, Routes, useNavigate, useParams, useSearchParams } from "re
 import { deleteFile, fetchFile, fetchFilePages, fetchFiles, fetchTask, fetchTasks, mediaUrl, reprocessFile, uploadPdf } from "./api";
 import { useEffect, useState } from "react";
 import { getBlockContentState } from "./blockContent";
-import { BlockItem, PageItem } from "./types";
+import { BlockItem, DetectionBoxItem, PageItem } from "./types";
 
 function useFileEvents(fileId: string | undefined) {
   const qc = useQueryClient();
@@ -227,11 +227,84 @@ function TaskPage() {
   );
 }
 
+function OverlayPage({
+  page,
+  hoveredId,
+  setHoveredId,
+  mode,
+}: {
+  page: PageItem;
+  hoveredId: string | null;
+  setHoveredId: (id: string | null) => void;
+  mode: "layout" | "detection";
+}) {
+  const detections = page.detections ?? [];
+  return (
+    <Box className="page-box">
+      <img className="page-image" src={mediaUrl(page.image_path)} alt={`page-${page.page_number}-${mode}`} />
+      <svg className="overlay" viewBox={`0 0 ${page.width_px ?? 1} ${page.height_px ?? 1}`}>
+        {mode === "layout"
+          ? page.blocks.map((b: BlockItem) => (
+              <rect
+                key={b.id}
+                x={b.bbox_px.x}
+                y={b.bbox_px.y}
+                width={b.bbox_px.width}
+                height={b.bbox_px.height}
+                fill="none"
+                stroke={b.color_key}
+                strokeWidth={hoveredId === b.id ? 4 : 2}
+                onMouseEnter={() => setHoveredId(b.id)}
+                onMouseLeave={() => setHoveredId(null)}
+              >
+                <title>{JSON.stringify(b.raw_surya, null, 2)}</title>
+              </rect>
+            ))
+          : detections.map((d: DetectionBoxItem) => {
+              const points = d.polygon_px?.points ?? [];
+              if (points.length >= 3) {
+                return (
+                  <polygon
+                    key={d.id}
+                    points={points.map((point) => `${point.x},${point.y}`).join(" ")}
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth={hoveredId === d.id ? 3 : 2}
+                    onMouseEnter={() => setHoveredId(d.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                  >
+                    <title>{JSON.stringify(d.raw_surya, null, 2)}</title>
+                  </polygon>
+                );
+              }
+              return (
+                <rect
+                  key={d.id}
+                  x={d.bbox_px.x}
+                  y={d.bbox_px.y}
+                  width={d.bbox_px.width}
+                  height={d.bbox_px.height}
+                  fill="none"
+                  stroke="#2563eb"
+                  strokeWidth={hoveredId === d.id ? 3 : 2}
+                  onMouseEnter={() => setHoveredId(d.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                >
+                  <title>{JSON.stringify(d.raw_surya, null, 2)}</title>
+                </rect>
+              );
+            })}
+      </svg>
+    </Box>
+  );
+}
+
 function FilePage() {
   const { fileId = "" } = useParams();
   useFileEvents(fileId);
   const [params, setParams] = useSearchParams();
   const [hoveredBlock, setHoveredBlock] = useState<string | null>(null);
+  const [hoveredDetection, setHoveredDetection] = useState<string | null>(null);
   const pageSize = Number(params.get("limit") ?? "10");
   const offset = Number(params.get("offset") ?? "0");
   const file = useQuery({ queryKey: ["file", fileId], queryFn: () => fetchFile(fileId), refetchInterval: 2000 });
@@ -264,24 +337,9 @@ function FilePage() {
         <Card key={p.id} withBorder>
           <Title order={4}>Page {p.page_number}</Title>
           <Box className="file-page-layout">
-            <Box className="file-left-column page-box">
-              <img className="page-image" src={mediaUrl(p.image_path)} alt={`page-${p.page_number}`} />
-              <svg className="overlay" viewBox={`0 0 ${p.width_px ?? 1} ${p.height_px ?? 1}`}>
-                {p.blocks.map((b: BlockItem) => (
-                  <rect
-                    key={b.id}
-                    x={b.bbox_px.x}
-                    y={b.bbox_px.y}
-                    width={b.bbox_px.width}
-                    height={b.bbox_px.height}
-                    fill="none"
-                    stroke={b.color_key}
-                    strokeWidth={hoveredBlock === b.id ? 4 : 2}
-                    onMouseEnter={() => setHoveredBlock(b.id)}
-                    onMouseLeave={() => setHoveredBlock(null)}
-                  />
-                ))}
-              </svg>
+            <Box className="file-left-column">
+              <OverlayPage page={p} hoveredId={hoveredBlock} setHoveredId={setHoveredBlock} mode="layout" />
+              <OverlayPage page={p} hoveredId={hoveredDetection} setHoveredId={setHoveredDetection} mode="detection" />
             </Box>
             <Stack className="file-right-column">
               {p.blocks.map((b: BlockItem) => {

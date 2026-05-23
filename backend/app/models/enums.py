@@ -30,6 +30,7 @@ class TaskType(StrEnum):
     VALIDATION = "validation"
     RENDER_PAGE = "render_page"
     LAYOUT = "layout"
+    DETECTION = "detection"
     OCR = "ocr"
     IMAGE_EXTRACTION = "image_extraction"
     META_EXTRACTION = "meta_extraction"

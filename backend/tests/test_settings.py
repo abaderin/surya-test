@@ -14,11 +14,12 @@ def test_worker_task_types_set_parses_layout() -> None:
 
 
 def test_worker_task_types_set_parses_multiple_values() -> None:
-    settings = Settings(worker_task_types="validation, render_page ,ocr")
+    settings = Settings(worker_task_types="validation, render_page ,ocr,detection")
     assert settings.worker_task_types_set == {
         TaskType.VALIDATION,
         TaskType.RENDER_PAGE,
         TaskType.OCR,
+        TaskType.DETECTION,
     }
 
 

@@ -70,6 +70,60 @@ def test_layout_converts_surya_boxes_with_clipping_and_polygon(monkeypatch: pyte
     assert blocks[0].raw["label"] == "Text"
 
 
+def test_detection_converts_surya_boxes_with_clipping_and_polygon(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_box = SimpleNamespace(
+        bbox=[-10.0, 8.0, 150.0, 52.0],
+        polygon=[[0.0, 10.0], [150.0, 8.0], [150.0, 52.0], [0.0, 50.0]],
+        confidence=0.88,
+        model_dump=lambda mode="json": {"bbox": [-10.0, 8.0, 150.0, 52.0], "confidence": 0.88},
+    )
+    fake_result = SimpleNamespace(bboxes=[fake_box])
+
+    class FakeImage:
+        size = (120, 200)
+
+        def convert(self, mode: str) -> "FakeImage":
+            assert mode == "RGB"
+            return self
+
+        def __enter__(self) -> "FakeImage":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    class FakePILImageModule:
+        @staticmethod
+        def open(path: str) -> FakeImage:
+            assert path == "/tmp/page.png"
+            return FakeImage()
+
+    class FakePredictor:
+        def __call__(self, images: list[FakeImage]) -> list[SimpleNamespace]:
+            assert len(images) == 1
+            return [fake_result]
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
+    fake_predictors = SimpleNamespace(get_detection_predictor=lambda: FakePredictor())
+    p = ProcessorService(predictors=fake_predictors)
+
+    detections = p.detection("/tmp/page.png", width=120, height=200)
+
+    assert len(detections) == 1
+    assert detections[0].bbox_px == {"x": 0, "y": 8, "width": 120, "height": 44}
+    assert detections[0].bbox_norm == {"x": 0.0, "y": 0.04, "width": 1.0, "height": 0.22}
+    assert detections[0].polygon_px == {
+        "points": [
+            {"x": 0.0, "y": 10.0},
+            {"x": 150.0, "y": 8.0},
+            {"x": 150.0, "y": 52.0},
+            {"x": 0.0, "y": 50.0},
+        ]
+    }
+    assert detections[0].confidence == 0.88
+    assert detections[0].raw["confidence"] == 0.88
+
+
 def test_ocr_page_extracts_lines_from_recognition_result(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_line1 = SimpleNamespace(
         text="Hello",

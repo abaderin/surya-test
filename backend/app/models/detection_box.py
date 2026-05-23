@@ -1,0 +1,23 @@
+import uuid
+
+from sqlalchemy import Float, ForeignKey, Integer
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class DetectionBox(Base, TimestampMixin):
+    __tablename__ = "detection_boxes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    file_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("files.id"), index=True)
+    page_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pages.id"), index=True)
+    page_number: Mapped[int] = mapped_column(Integer)
+    bbox_px: Mapped[dict] = mapped_column(JSONB)
+    bbox_norm: Mapped[dict] = mapped_column(JSONB)
+    polygon_px: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_surya: Mapped[dict] = mapped_column(JSONB)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)

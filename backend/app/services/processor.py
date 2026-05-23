@@ -20,6 +20,15 @@ class LayoutBlock:
 
 
 @dataclass
+class DetectionBox:
+    bbox_px: dict
+    bbox_norm: dict
+    polygon_px: dict | None
+    confidence: float
+    raw: dict
+
+
+@dataclass
 class RenderedPage:
     width_px: int
     height_px: int
@@ -75,22 +84,10 @@ class ProcessorService:
         boxes = getattr(result, "bboxes", []) or []
         blocks: list[LayoutBlock] = []
         for box in boxes:
-            bbox = getattr(box, "bbox", None)
-            if not bbox or len(bbox) < 4:
+            geometry = self._box_geometry(getattr(box, "bbox", None), width, height)
+            if geometry is None:
                 continue
 
-            x1, y1, x2, y2 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
-            left = max(0.0, min(float(width), x1))
-            top = max(0.0, min(float(height), y1))
-            right = max(0.0, min(float(width), x2))
-            bottom = max(0.0, min(float(height), y2))
-            if right < left:
-                left, right = right, left
-            if bottom < top:
-                top, bottom = bottom, top
-
-            bbox_width = max(0.0, right - left)
-            bbox_height = max(0.0, bottom - top)
             block_type = str(getattr(box, "label", "unknown"))
             polygon = self._polygon_px(getattr(box, "polygon", None))
             confidence = float(getattr(box, "confidence", 0.0))
@@ -98,24 +95,42 @@ class ProcessorService:
             blocks.append(
                 LayoutBlock(
                     block_type=block_type,
-                    bbox_px={
-                        "x": int(round(left)),
-                        "y": int(round(top)),
-                        "width": int(round(bbox_width)),
-                        "height": int(round(bbox_height)),
-                    },
-                    bbox_norm={
-                        "x": round(left / width, 6),
-                        "y": round(top / height, 6),
-                        "width": round(bbox_width / width, 6),
-                        "height": round(bbox_height / height, 6),
-                    },
+                    bbox_px=geometry["bbox_px"],
+                    bbox_norm=geometry["bbox_norm"],
                     polygon_px=polygon,
                     confidence=confidence,
                     raw=self._raw_surya_block(box),
                 )
             )
         return blocks
+
+    def detection(self, page_path: str, width: int, height: int) -> list[DetectionBox]:
+        from PIL import Image
+
+        predictor = self.predictors.get_detection_predictor()
+        with Image.open(page_path) as image:
+            rgb_image = image.convert("RGB")
+        detection_results = predictor([rgb_image])
+        if not detection_results:
+            return []
+
+        result = detection_results[0]
+        boxes = getattr(result, "bboxes", []) or []
+        detected: list[DetectionBox] = []
+        for box in boxes:
+            geometry = self._box_geometry(getattr(box, "bbox", None), width, height)
+            if geometry is None:
+                continue
+            detected.append(
+                DetectionBox(
+                    bbox_px=geometry["bbox_px"],
+                    bbox_norm=geometry["bbox_norm"],
+                    polygon_px=self._polygon_px(getattr(box, "polygon", None)),
+                    confidence=float(getattr(box, "confidence", 0.0)),
+                    raw=self._raw_surya_block(box),
+                )
+            )
+        return detected
 
     def _raw_surya_block(self, box: Any) -> dict:
         if hasattr(box, "model_dump"):
@@ -151,6 +166,37 @@ class ProcessorService:
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         return str(value)
+
+    def _box_geometry(self, bbox: Any, width: int, height: int) -> dict | None:
+        if not bbox or len(bbox) < 4:
+            return None
+
+        x1, y1, x2, y2 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+        left = max(0.0, min(float(width), x1))
+        top = max(0.0, min(float(height), y1))
+        right = max(0.0, min(float(width), x2))
+        bottom = max(0.0, min(float(height), y2))
+        if right < left:
+            left, right = right, left
+        if bottom < top:
+            top, bottom = bottom, top
+
+        bbox_width = max(0.0, right - left)
+        bbox_height = max(0.0, bottom - top)
+        return {
+            "bbox_px": {
+                "x": int(round(left)),
+                "y": int(round(top)),
+                "width": int(round(bbox_width)),
+                "height": int(round(bbox_height)),
+            },
+            "bbox_norm": {
+                "x": round(left / width, 6),
+                "y": round(top / height, 6),
+                "width": round(bbox_width / width, 6),
+                "height": round(bbox_height / height, 6),
+            },
+        }
 
     def ocr_page(self, page_path: str) -> list[dict]:
         from PIL import Image

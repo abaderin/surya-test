@@ -6,6 +6,7 @@ from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.block import Block
+from app.models.detection_box import DetectionBox
 from app.models.enums import FileStatus, PageStatus, TaskStatus, TaskType
 from app.models.file import File
 from app.models.page import Page
@@ -154,7 +155,7 @@ class TaskService:
         task_type_filter = (
             Task.type.in_(allowed_types)
             if allowed_types is not None
-            else Task.type != TaskType.LAYOUT
+            else Task.type.notin_([TaskType.LAYOUT, TaskType.DETECTION])
         )
         await self.session.execute(
             update(Task)
@@ -196,6 +197,8 @@ class TaskService:
                 await self._execute_render(task)
             elif task.type == TaskType.LAYOUT:
                 await self._execute_layout(task)
+            elif task.type == TaskType.DETECTION:
+                await self._execute_detection(task)
             elif task.type == TaskType.OCR:
                 await self._execute_ocr(task)
             elif task.type == TaskType.IMAGE_EXTRACTION:
@@ -245,7 +248,7 @@ class TaskService:
         pages_count = await asyncio.to_thread(self.processor.validate_pdf, str(source_abs_path))
         file.pages_count = pages_count
         file.status = FileStatus.IN_PROGRESS
-        file.progress_total = 1 + pages_count * 2
+        file.progress_total = 1 + pages_count * 3
         file.cover_path = self.storage.save_cover_placeholder(file.id)
         self.session.add(file)
 
@@ -302,6 +305,15 @@ class TaskService:
                 file_id=page.file_id,
                 page_id=page.id,
                 type=TaskType.LAYOUT,
+                status=TaskStatus.NEW,
+                input_payload={"page_number": page.page_number},
+            )
+        )
+        self.session.add(
+            Task(
+                file_id=page.file_id,
+                page_id=page.id,
+                type=TaskType.DETECTION,
                 status=TaskStatus.NEW,
                 input_payload={"page_number": page.page_number},
             )
@@ -369,6 +381,37 @@ class TaskService:
         page.status = PageStatus.DONE
         task.output_payload = {"blocks": len(blocks)}
         await self.session.commit()
+
+    async def _execute_detection(self, task: Task) -> None:
+        page = await self.session.get(Page, task.page_id)
+        if not page:
+            raise ValueError("page not found")
+        if not page.image_path or not page.width_px or not page.height_px:
+            raise ValueError("page image not ready")
+        page_image_abs_path = self.storage.resolve_media_path(page.image_path)
+        detection_boxes = await asyncio.to_thread(
+            self.processor.detection,
+            str(page_image_abs_path),
+            page.width_px,
+            page.height_px,
+        )
+        await self.session.execute(delete(DetectionBox).where(DetectionBox.page_id == page.id))
+        for i, item in enumerate(detection_boxes):
+            self.session.add(
+                DetectionBox(
+                    file_id=page.file_id,
+                    page_id=page.id,
+                    page_number=page.page_number,
+                    bbox_px=item.bbox_px,
+                    bbox_norm=item.bbox_norm,
+                    polygon_px=item.polygon_px,
+                    confidence=item.confidence,
+                    raw_surya=item.raw,
+                    sort_order=i,
+                )
+            )
+        task.output_payload = {"boxes": len(detection_boxes)}
+        await self.session.flush()
 
     async def _execute_ocr(self, task: Task) -> None:
         block_ids = ocr_block_ids_from_payload(task.input_payload)
@@ -520,6 +563,7 @@ class TaskService:
             .where(and_(Task.file_id == file_id, Task.deleted.is_(False)))
             .values(deleted=True, page_id=None)
         )
+        await self.session.execute(delete(DetectionBox).where(DetectionBox.file_id == file_id))
         await self.session.execute(delete(Block).where(Block.file_id == file_id))
         await self.session.execute(delete(Page).where(Page.file_id == file_id))
         self.storage.remove_generated_artifacts(file_id)
@@ -551,6 +595,7 @@ class TaskService:
         if file.status not in {FileStatus.DONE, FileStatus.FAILED, FileStatus.VALIDATION_FAILED}:
             raise RuntimeError("file is being processed")
 
+        await self.session.execute(delete(DetectionBox).where(DetectionBox.file_id == file_id))
         await self.session.execute(delete(Block).where(Block.file_id == file_id))
         await self.session.execute(delete(Task).where(Task.file_id == file_id))
         await self.session.execute(delete(Page).where(Page.file_id == file_id))

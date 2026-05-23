@@ -135,6 +135,30 @@ services:
     group_add:
     - video
 
+  detector-worker:
+    image: surya-test-app:latest
+    command: ["python", "-m", "app.worker.runner"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+asyncpg://surya:surya@db:5432/surya
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /app/storage
+      WORKER_ENABLED: "false"
+      WORKER_TASK_TYPES: detection
+      CPU_THREADS: "10"
+      CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://razer.home.baderin.me:18080
+    volumes:
+      - storage:/app/storage
+    gpus: all
+    group_add:
+    - video
+
   jupyter:
     build:
       context: .

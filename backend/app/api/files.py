@@ -8,10 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_storage, get_task_service
 from app.models.block import Block
+from app.models.detection_box import DetectionBox
 from app.models.enums import FileStatus
 from app.models.file import File
 from app.models.page import Page
-from app.schemas.files import BlockRead, FileRead, PageListResponse, PageRead
+from app.schemas.files import BlockRead, DetectionBoxRead, FileRead, PageListResponse, PageRead
 from app.services.storage import StorageService
 from app.services.task_service import TaskService
 
@@ -102,6 +103,9 @@ async def list_pages(
         blocks = (
             await db.execute(select(Block).where(Block.page_id == page.id).order_by(Block.sort_order))
         ).scalars().all()
+        detections = (
+            await db.execute(select(DetectionBox).where(DetectionBox.page_id == page.id).order_by(DetectionBox.sort_order))
+        ).scalars().all()
         items.append(
             PageRead(
                 id=page.id,
@@ -112,6 +116,7 @@ async def list_pages(
                 status=page.status,
                 error_message=page.error_message,
                 blocks=[BlockRead.model_validate(b, from_attributes=True) for b in blocks],
+                detections=[DetectionBoxRead.model_validate(d, from_attributes=True) for d in detections],
             )
         )
     return PageListResponse(total=total, items=items)

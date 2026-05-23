@@ -35,6 +35,16 @@ class BlockRead(BaseModel):
     sort_order: int
 
 
+class DetectionBoxRead(BaseModel):
+    id: UUID
+    bbox_px: dict
+    bbox_norm: dict
+    polygon_px: dict | None
+    confidence: float | None
+    raw_surya: dict
+    sort_order: int
+
+
 class PageRead(BaseModel):
     id: UUID
     page_number: int
@@ -44,6 +54,7 @@ class PageRead(BaseModel):
     status: PageStatus
     error_message: str | None
     blocks: list[BlockRead]
+    detections: list[DetectionBoxRead]
 
 
 class PageListResponse(BaseModel):

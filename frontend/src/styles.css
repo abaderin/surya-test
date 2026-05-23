@@ -18,6 +18,9 @@ body {
 .file-left-column {
   flex: 0 1 520px;
   min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .file-right-column {

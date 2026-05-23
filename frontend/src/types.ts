@@ -34,6 +34,16 @@ export type BlockItem = {
   artifact_path: string | null;
 };
 
+export type DetectionBoxItem = {
+  id: string;
+  bbox_px: { x: number; y: number; width: number; height: number };
+  bbox_norm: { x: number; y: number; width: number; height: number };
+  polygon_px: { points: { x: number; y: number }[] } | null;
+  confidence: number | null;
+  raw_surya: Record<string, unknown>;
+  sort_order: number;
+};
+
 export type PageItem = {
   id: string;
   page_number: number;
@@ -43,6 +53,7 @@ export type PageItem = {
   status: TaskStatus;
   error_message: string | null;
   blocks: BlockItem[];
+  detections: DetectionBoxItem[];
 };
 
 export type PageListResponse = {
