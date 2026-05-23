@@ -21,3 +21,6 @@ coverage/
 .ipynb_checkpoints
 *.pdf
 *.jpg
+*.png
+*.djvu
+

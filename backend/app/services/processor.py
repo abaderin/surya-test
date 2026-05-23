@@ -154,35 +154,66 @@ class ProcessorService:
         return str(value)
 
     def ocr(self, page_path: str, bbox_px: dict) -> dict:
+        results = self.ocr_many(page_path, [bbox_px])
+        if not results:
+            return {"text": "", "raw_surya_ocr": []}
+        return results[0]
+
+    def ocr_many(self, page_path: str, bboxes_px: list[dict]) -> list[dict]:
         from PIL import Image
 
         predictor = self.predictors.get_recognition_predictor()
-        x1 = int(bbox_px["x"])
-        y1 = int(bbox_px["y"])
-        x2 = int(bbox_px["x"] + bbox_px["width"])
-        y2 = int(bbox_px["y"] + bbox_px["height"])
-        if x2 <= x1 or y2 <= y1:
-            return {"text": "", "raw_surya_ocr": []}
+        normalized_boxes: list[tuple[int, int, int, int] | None] = []
+        for bbox_px in bboxes_px:
+            x1 = int(bbox_px["x"])
+            y1 = int(bbox_px["y"])
+            x2 = int(bbox_px["x"] + bbox_px["width"])
+            y2 = int(bbox_px["y"] + bbox_px["height"])
+            if x2 <= x1 or y2 <= y1:
+                normalized_boxes.append(None)
+                continue
+            normalized_boxes.append((x1, y1, x2, y2))
+        valid_boxes = [box for box in normalized_boxes if box is not None]
+        if not valid_boxes:
+            return [{"text": "", "raw_surya_ocr": []} for _ in bboxes_px]
 
         with Image.open(page_path) as image:
             rgb_image = image.convert("RGB")
         with self.predictors.gpu_lock():
             ocr_results = predictor(
-                [rgb_image],
-                bboxes=[[[x1, y1, x2, y2]]],
+                [rgb_image for _ in valid_boxes],
+                bboxes=[[[x1, y1, x2, y2]] for x1, y1, x2, y2 in valid_boxes],
                 sort_lines=True,
                 math_mode=True,
             )
-        if not ocr_results:
-            return {"text": "", "raw_surya_ocr": []}
+        extracted_valid_results: list[dict] = []
+        for result in ocr_results or []:
+            text_lines = getattr(result, "text_lines", []) or []
+            text = "\n".join(
+                str(getattr(line, "text", "")).strip()
+                for line in text_lines
+                if str(getattr(line, "text", "")).strip()
+            )
+            extracted_valid_results.append(
+                {
+                    "text": text,
+                    "raw_surya_ocr": self._raw_surya_ocr(result),
+                }
+            )
+        if len(extracted_valid_results) < len(valid_boxes):
+            extracted_valid_results.extend(
+                [{"text": "", "raw_surya_ocr": []} for _ in range(len(valid_boxes) - len(extracted_valid_results))]
+            )
 
-        result = ocr_results[0]
-        text_lines = getattr(result, "text_lines", []) or []
-        text = "\n".join(str(getattr(line, "text", "")).strip() for line in text_lines if str(getattr(line, "text", "")).strip())
-        return {
-            "text": text,
-            "raw_surya_ocr": self._raw_surya_ocr(result),
-        }
+        output: list[dict] = []
+        valid_index = 0
+        for box in normalized_boxes:
+            if box is None:
+                output.append({"text": "", "raw_surya_ocr": []})
+            else:
+                output.append(extracted_valid_results[valid_index])
+                valid_index += 1
+        return output
 
     def _raw_surya_ocr(self, result: Any) -> Any:
         if hasattr(result, "model_dump"):

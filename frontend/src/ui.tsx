@@ -16,6 +16,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Route, Routes, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { deleteFile, fetchFile, fetchFilePages, fetchFiles, fetchTask, fetchTasks, mediaUrl, reprocessFile, uploadPdf } from "./api";
 import { useEffect, useState } from "react";
+import { getBlockContentState } from "./blockContent";
+import { BlockItem, PageItem } from "./types";
 
 function useFileEvents(fileId: string | undefined) {
   const qc = useQueryClient();
@@ -258,14 +260,14 @@ function FilePage() {
         </Button>
         <Button onClick={() => setParams({ limit: String(pageSize), offset: String(offset + pageSize) })}>Next</Button>
       </Group>
-      {pages.data?.items.map((p: any) => (
+      {pages.data?.items.map((p: PageItem) => (
         <Card key={p.id} withBorder>
           <Title order={4}>Page {p.page_number}</Title>
           <Box className="file-page-layout">
             <Box className="file-left-column page-box">
               <img className="page-image" src={mediaUrl(p.image_path)} alt={`page-${p.page_number}`} />
               <svg className="overlay" viewBox={`0 0 ${p.width_px ?? 1} ${p.height_px ?? 1}`}>
-                {p.blocks.map((b: any) => (
+                {p.blocks.map((b: BlockItem) => (
                   <rect
                     key={b.id}
                     x={b.bbox_px.x}
@@ -282,27 +284,32 @@ function FilePage() {
               </svg>
             </Box>
             <Stack className="file-right-column">
-              {p.blocks.map((b: any) => (
-                <Card
-                  key={b.id}
-                  withBorder
-                  className={hoveredBlock === b.id ? "focused" : ""}
-                  style={{ borderColor: b.color_key, borderWidth: 2 }}
-                >
-                  <Text fw={600}>{b.type}</Text>
-                  {b.artifact_path ? (
-                    <img src={mediaUrl(b.artifact_path)} alt={`block-${b.id}`} style={{ maxWidth: "100%", display: "block" }} />
-                  ) : b.type === "Picture" ? (
-                    <Text size="sm">Image pending</Text>
-                  ) : b.type === "Text" ? (
-                    <Text size="sm" className="block-text-content">
-                      {typeof b.result?.text === "string" && b.result.text.trim() ? b.result.text : "OCR pending"}
-                    </Text>
-                  ) : (
-                    <Text size="sm">No extracted content</Text>
-                  )}
-                </Card>
-              ))}
+              {p.blocks.map((b: BlockItem) => {
+                const content = getBlockContentState(b);
+                return (
+                  <Card
+                    key={b.id}
+                    withBorder
+                    className={hoveredBlock === b.id ? "focused" : ""}
+                    style={{ borderColor: b.color_key, borderWidth: 2 }}
+                  >
+                    <Text fw={600}>{b.type}</Text>
+                    {content.kind === "image" ? (
+                      <img src={mediaUrl(b.artifact_path)} alt={`block-${b.id}`} style={{ maxWidth: "100%", display: "block" }} />
+                    ) : content.kind === "image_pending" ? (
+                      <Text size="sm">Image pending</Text>
+                    ) : content.kind === "text" ? (
+                      <Text size="sm" className="block-text-content">
+                        {content.text}
+                      </Text>
+                    ) : content.kind === "ocr_pending" ? (
+                      <Text size="sm">OCR pending</Text>
+                    ) : (
+                      <Text size="sm">No extracted content</Text>
+                    )}
+                  </Card>
+                );
+              })}
             </Stack>
           </Box>
         </Card>

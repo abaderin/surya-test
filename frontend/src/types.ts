@@ -45,6 +45,11 @@ export type PageItem = {
   blocks: BlockItem[];
 };
 
+export type PageListResponse = {
+  total: number;
+  items: PageItem[];
+};
+
 export type TaskItem = {
   id: string;
   file_id: string | null;

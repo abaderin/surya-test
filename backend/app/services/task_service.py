@@ -56,6 +56,16 @@ def should_enqueue_image_extraction(block_type: str) -> bool:
     return block_type == "Picture"
 
 
+def ocr_block_ids_from_payload(payload: dict) -> list[UUID]:
+    raw_block_ids = payload.get("block_ids")
+    if isinstance(raw_block_ids, list):
+        return [UUID(str(block_id)) for block_id in raw_block_ids]
+    raw_block_id = payload.get("block_id")
+    if raw_block_id:
+        return [UUID(str(raw_block_id))]
+    return []
+
+
 class TaskService:
     def __init__(
         self,
@@ -284,6 +294,7 @@ class TaskService:
         await self.session.flush()
         page_image_abs_path = self.storage.resolve_media_path(page.image_path)
         blocks = await asyncio.to_thread(self.processor.layout, str(page_image_abs_path), page.width_px, page.height_px)
+        ocr_block_ids: list[str] = []
         for i, block in enumerate(blocks):
             model = Block(
                 file_id=page.file_id,
@@ -301,15 +312,7 @@ class TaskService:
             self.session.add(model)
             await self.session.flush()
             if should_enqueue_ocr(model.type):
-                self.session.add(
-                    Task(
-                        file_id=page.file_id,
-                        page_id=page.id,
-                        type=TaskType.OCR,
-                        status=TaskStatus.NEW,
-                        input_payload={"block_id": str(model.id), "type": model.type},
-                    )
-                )
+                ocr_block_ids.append(str(model.id))
             if should_enqueue_image_extraction(model.type):
                 self.session.add(
                     Task(
@@ -320,29 +323,54 @@ class TaskService:
                         input_payload={"block_id": str(model.id), "type": model.type},
                     )
                 )
+        if ocr_block_ids:
+            self.session.add(
+                Task(
+                    file_id=page.file_id,
+                    page_id=page.id,
+                    type=TaskType.OCR,
+                    status=TaskStatus.NEW,
+                    input_payload={"block_ids": ocr_block_ids},
+                )
+            )
         page.status = PageStatus.DONE
         task.output_payload = {"blocks": len(blocks)}
         await self.session.commit()
 
     async def _execute_ocr(self, task: Task) -> None:
-        block_id = task.input_payload.get("block_id")
-        if not block_id:
-            task.output_payload = {"skipped": True}
+        block_ids = ocr_block_ids_from_payload(task.input_payload)
+        if not block_ids:
+            task.output_payload = {"skipped": True, "reason": "no_ocr_blocks"}
             return
-        block = await self.session.get(Block, UUID(block_id))
-        if not block:
-            raise ValueError("block not found")
-        if not should_enqueue_ocr(block.type):
+        blocks: list[Block] = []
+        for block_id in block_ids:
+            block = await self.session.get(Block, block_id)
+            if not block:
+                raise ValueError("block not found")
+            blocks.append(block)
+        ocr_blocks = [block for block in blocks if should_enqueue_ocr(block.type)]
+        if not ocr_blocks:
             task.output_payload = {"skipped": True, "reason": "unsupported_label"}
             return
-        page = await self.session.get(Page, block.page_id)
+        page = await self.session.get(Page, ocr_blocks[0].page_id)
         if not page or not page.image_path:
             raise ValueError("page image not ready")
         page_image_abs_path = self.storage.resolve_media_path(page.image_path)
-        ocr = await asyncio.to_thread(self.processor.ocr, str(page_image_abs_path), block.bbox_px)
-        block.result = {**(block.result or {}), **ocr}
-        text = str(ocr.get("text", ""))
-        task.output_payload = {"text": text, "lines": len([line for line in text.splitlines() if line.strip()])}
+        ocr_results = await asyncio.to_thread(
+            self.processor.ocr_many,
+            str(page_image_abs_path),
+            [block.bbox_px for block in ocr_blocks],
+        )
+        total_lines = 0
+        with_text = 0
+        for block, ocr in zip(ocr_blocks, ocr_results, strict=False):
+            block.result = {**(block.result or {}), **ocr}
+            text = str(ocr.get("text", ""))
+            lines_count = len([line for line in text.splitlines() if line.strip()])
+            total_lines += lines_count
+            if text.strip():
+                with_text += 1
+        task.output_payload = {"blocks": len(ocr_blocks), "text_blocks": with_text, "lines": total_lines}
         await self.session.flush()
 
     async def _execute_image_extraction(self, task: Task) -> None:

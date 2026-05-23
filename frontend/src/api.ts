@@ -1,4 +1,4 @@
-import { FileItem, TaskItem } from "./types";
+import { FileItem, PageListResponse, TaskItem } from "./types";
 
 const API_BASE = "/api";
 
@@ -14,7 +14,7 @@ export async function fetchFile(fileId: string): Promise<FileItem> {
   return res.json();
 }
 
-export async function fetchFilePages(fileId: string, limit: number, offset: number) {
+export async function fetchFilePages(fileId: string, limit: number, offset: number): Promise<PageListResponse> {
   const res = await fetch(`${API_BASE}/files/${fileId}/pages?limit=${limit}&offset=${offset}`);
   if (!res.ok) throw new Error("failed to fetch pages");
   return res.json();

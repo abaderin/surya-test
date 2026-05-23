@@ -116,6 +116,61 @@ def test_ocr_extracts_text_from_recognition_result(monkeypatch: pytest.MonkeyPat
     assert result["raw_surya_ocr"]["text_lines"][0]["text"] == "Hello"
 
 
+def test_ocr_many_extracts_multiple_bboxes_in_single_predictor_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_result_1 = SimpleNamespace(
+        text_lines=[SimpleNamespace(text="First")],
+        model_dump=lambda mode="json": {"text_lines": [{"text": "First"}]},
+    )
+    fake_result_2 = SimpleNamespace(
+        text_lines=[SimpleNamespace(text="Second"), SimpleNamespace(text="Line")],
+        model_dump=lambda mode="json": {"text_lines": [{"text": "Second"}, {"text": "Line"}]},
+    )
+
+    class FakeImage:
+        def convert(self, mode: str) -> "FakeImage":
+            assert mode == "RGB"
+            return self
+
+        def __enter__(self) -> "FakeImage":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    class FakePILImageModule:
+        @staticmethod
+        def open(path: str) -> FakeImage:
+            assert path == "/tmp/page.png"
+            return FakeImage()
+
+    class FakePredictor:
+        def __call__(self, images, bboxes, sort_lines, math_mode):
+            assert len(images) == 2
+            assert bboxes == [[[10, 20, 40, 60]], [[100, 200, 150, 260]]]
+            assert sort_lines is True
+            assert math_mode is True
+            return [fake_result_1, fake_result_2]
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
+    fake_predictors = SimpleNamespace(
+        get_recognition_predictor=lambda: FakePredictor(),
+        gpu_lock=lambda: nullcontext(),
+    )
+    p = ProcessorService(predictors=fake_predictors)
+
+    results = p.ocr_many(
+        "/tmp/page.png",
+        [
+            {"x": 10, "y": 20, "width": 30, "height": 40},
+            {"x": 100, "y": 200, "width": 50, "height": 60},
+        ],
+    )
+
+    assert results[0]["text"] == "First"
+    assert results[1]["text"] == "Second\nLine"
+    assert results[1]["raw_surya_ocr"]["text_lines"][0]["text"] == "Second"
+
+
 def test_render_page_writes_png_and_returns_dimensions(tmp_path: Path) -> None:
     source = tmp_path / "source.pdf"
     writer = PdfWriter()

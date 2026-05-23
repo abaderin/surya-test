@@ -1,4 +1,11 @@
-from app.services.task_service import color_for_block_type, should_enqueue_image_extraction, should_enqueue_ocr
+import uuid
+
+from app.services.task_service import (
+    color_for_block_type,
+    ocr_block_ids_from_payload,
+    should_enqueue_image_extraction,
+    should_enqueue_ocr,
+)
 
 
 def test_color_for_block_type_maps_surya_labels() -> None:
@@ -31,3 +38,14 @@ def test_should_enqueue_image_extraction_only_for_picture_label() -> None:
     assert should_enqueue_image_extraction("Picture") is True
     assert should_enqueue_image_extraction("Figure") is False
     assert should_enqueue_image_extraction("Text") is False
+
+
+def test_ocr_block_ids_from_payload_supports_new_block_ids() -> None:
+    first = uuid.uuid4()
+    second = uuid.uuid4()
+    assert ocr_block_ids_from_payload({"block_ids": [str(first), str(second)]}) == [first, second]
+
+
+def test_ocr_block_ids_from_payload_supports_legacy_block_id() -> None:
+    value = uuid.uuid4()
+    assert ocr_block_ids_from_payload({"block_id": str(value)}) == [value]
