@@ -67,8 +67,7 @@ class ProcessorService:
 
         with Image.open(page_path) as image:
             rgb_image = image.convert("RGB")
-        with self.predictors.gpu_lock():
-            layout_results = predictor([rgb_image])
+        layout_results = predictor([rgb_image])
         if not layout_results:
             return []
 
@@ -160,13 +159,12 @@ class ProcessorService:
         det_predictor = self.predictors.get_detection_predictor()
         with Image.open(page_path) as image:
             rgb_image = image.convert("RGB")
-        with self.predictors.gpu_lock():
-            ocr_results = predictor(
-                [rgb_image],
-                det_predictor=det_predictor,
-                sort_lines=True,
-                math_mode=True,
-            )
+        ocr_results = predictor(
+            [rgb_image],
+            det_predictor=det_predictor,
+            sort_lines=True,
+            math_mode=True,
+        )
         if not ocr_results:
             return []
         lines: list[dict] = []
