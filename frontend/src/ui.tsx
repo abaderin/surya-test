@@ -47,7 +47,13 @@ function useFileEvents(fileId: string | undefined) {
 
 function FilesPage() {
   const qc = useQueryClient();
-  const files = useQuery({ queryKey: ["files"], queryFn: fetchFiles });
+  const [params, setParams] = useSearchParams();
+  const fileLimit = Number(params.get("files_limit") ?? "50");
+  const fileOffset = Number(params.get("files_offset") ?? "0");
+  const files = useQuery({
+    queryKey: ["files", fileLimit, fileOffset],
+    queryFn: () => fetchFiles(fileLimit, fileOffset),
+  });
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
@@ -90,6 +96,13 @@ function FilesPage() {
       setUploadProgress(null);
       setUploading(false);
     }
+  };
+
+  const updateFilePaginationParams = (next: { limit: number; offset: number }) => {
+    const nextParams = new URLSearchParams(params);
+    nextParams.set("files_limit", String(next.limit));
+    nextParams.set("files_offset", String(next.offset));
+    setParams(nextParams);
   };
 
   const onReprocess = async (fileId: string) => {
@@ -192,6 +205,31 @@ function FilesPage() {
           Upload starts only after pressing the Upload button.
         </Text>
       </Group>
+      <Group>
+        <NumberInput
+          label="Files page size"
+          value={fileLimit}
+          onChange={(value) => updateFilePaginationParams({ limit: Number(value) || 50, offset: 0 })}
+          min={10}
+          max={200}
+          step={10}
+        />
+        <Button
+          onClick={() => updateFilePaginationParams({ limit: fileLimit, offset: Math.max(0, fileOffset - fileLimit) })}
+          disabled={fileOffset <= 0}
+        >
+          Prev
+        </Button>
+        <Button
+          onClick={() => updateFilePaginationParams({ limit: fileLimit, offset: fileOffset + fileLimit })}
+          disabled={(files.data?.length ?? 0) < fileLimit}
+        >
+          Next
+        </Button>
+        <Text size="sm" c="dimmed">
+          offset: {fileOffset}
+        </Text>
+      </Group>
       {files.data?.map((f) => (
         <Card withBorder key={f.id}>
           <Group justify="space-between">
@@ -261,10 +299,50 @@ function FilesPage() {
 }
 
 function TasksPage() {
-  const tasks = useQuery({ queryKey: ["tasks"], queryFn: fetchTasks, refetchInterval: 2000 });
+  const [params, setParams] = useSearchParams();
+  const taskLimit = Number(params.get("tasks_limit") ?? "100");
+  const taskOffset = Number(params.get("tasks_offset") ?? "0");
+  const tasks = useQuery({
+    queryKey: ["tasks", taskLimit, taskOffset],
+    queryFn: () => fetchTasks(taskLimit, taskOffset),
+    refetchInterval: 2000,
+  });
+
+  const updateTaskPaginationParams = (next: { limit: number; offset: number }) => {
+    const nextParams = new URLSearchParams(params);
+    nextParams.set("tasks_limit", String(next.limit));
+    nextParams.set("tasks_offset", String(next.offset));
+    setParams(nextParams);
+  };
+
   return (
     <Stack>
       <Title order={2}>Tasks</Title>
+      <Group>
+        <NumberInput
+          label="Tasks page size"
+          value={taskLimit}
+          onChange={(value) => updateTaskPaginationParams({ limit: Number(value) || 100, offset: 0 })}
+          min={10}
+          max={500}
+          step={10}
+        />
+        <Button
+          onClick={() => updateTaskPaginationParams({ limit: taskLimit, offset: Math.max(0, taskOffset - taskLimit) })}
+          disabled={taskOffset <= 0}
+        >
+          Prev
+        </Button>
+        <Button
+          onClick={() => updateTaskPaginationParams({ limit: taskLimit, offset: taskOffset + taskLimit })}
+          disabled={(tasks.data?.length ?? 0) < taskLimit}
+        >
+          Next
+        </Button>
+        <Text size="sm" c="dimmed">
+          offset: {taskOffset}
+        </Text>
+      </Group>
       {tasks.data?.map((t) => (
         <Card withBorder key={t.id}>
           <Group justify="space-between">

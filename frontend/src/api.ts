@@ -2,8 +2,8 @@ import { FileItem, PageListResponse, TaskItem } from "./types";
 
 const API_BASE = "/api";
 
-export async function fetchFiles(): Promise<FileItem[]> {
-  const res = await fetch(`${API_BASE}/files`);
+export async function fetchFiles(limit: number, offset: number): Promise<FileItem[]> {
+  const res = await fetch(`${API_BASE}/files?limit=${limit}&offset=${offset}`);
   if (!res.ok) throw new Error("failed to fetch files");
   return res.json();
 }
@@ -28,8 +28,8 @@ export async function uploadPdf(file: File): Promise<FileItem> {
   return res.json();
 }
 
-export async function fetchTasks(): Promise<TaskItem[]> {
-  const res = await fetch(`${API_BASE}/tasks`);
+export async function fetchTasks(limit: number, offset: number): Promise<TaskItem[]> {
+  const res = await fetch(`${API_BASE}/tasks?limit=${limit}&offset=${offset}`);
   if (!res.ok) throw new Error("failed to fetch tasks");
   return res.json();
 }
