@@ -243,6 +243,69 @@ def test_ocr_page_extracts_lines_from_recognition_result(monkeypatch: pytest.Mon
     assert results[1]["raw_surya_ocr"]["text"] == "World"
 
 
+def test_ocr_page_many_batches_images_in_single_predictor_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    first_line = SimpleNamespace(
+        text="First",
+        bbox=[10, 20, 30, 40],
+        polygon=[[10, 20], [30, 20], [30, 40], [10, 40]],
+        confidence=0.9,
+        model_dump=lambda mode="json": {"text": "First"},
+    )
+    second_line = SimpleNamespace(
+        text="Second",
+        bbox=[50, 60, 90, 80],
+        polygon=[[50, 60], [90, 60], [90, 80], [50, 80]],
+        confidence=0.8,
+        model_dump=lambda mode="json": {"text": "Second"},
+    )
+    fake_det_predictor = object()
+
+    class FakeImage:
+        def __init__(self, size: tuple[int, int]) -> None:
+            self.size = size
+
+        def convert(self, mode: str) -> "FakeImage":
+            assert mode == "RGB"
+            return self
+
+        def __enter__(self) -> "FakeImage":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    class FakePILImageModule:
+        @staticmethod
+        def open(path: str) -> FakeImage:
+            if path == "/tmp/one.png":
+                return FakeImage((120, 200))
+            assert path == "/tmp/two.png"
+            return FakeImage((140, 220))
+
+    class FakePredictor:
+        def __call__(self, images, det_predictor, sort_lines, math_mode):
+            assert len(images) == 2
+            assert images[0].size == (120, 200)
+            assert images[1].size == (140, 220)
+            assert det_predictor is fake_det_predictor
+            assert sort_lines is True
+            assert math_mode is True
+            return [SimpleNamespace(text_lines=[first_line]), SimpleNamespace(text_lines=[second_line])]
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=FakePILImageModule))
+    fake_predictors = SimpleNamespace(
+        get_recognition_predictor=lambda: FakePredictor(),
+        get_detection_predictor=lambda: fake_det_predictor,
+    )
+    p = ProcessorService(predictors=fake_predictors)
+
+    results = p.ocr_page_many(["/tmp/one.png", "/tmp/two.png"])
+
+    assert len(results) == 2
+    assert results[0][0]["text"] == "First"
+    assert results[1][0]["text"] == "Second"
+
+
 def test_ocr_page_uses_polygon_when_bbox_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_line = SimpleNamespace(
         text="First",

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.services.task_service as task_service_module
+from app.models.block import Block
 from app.models.enums import FileStatus, PageStatus, TaskStatus, TaskType
 from app.models.file import File
 from app.models.page import Page
@@ -69,6 +70,65 @@ class FakeRenderProcessor:
     def render_page(self, source_path: str, page_number: int, output_path: str, dpi: int):
         self.call = (source_path, page_number, output_path, dpi)
         return SimpleNamespace(width_px=2550, height_px=3300, dpi=dpi, format="png")
+
+
+class FakeOcrBatchSession:
+    def __init__(self, pages: list[Page], blocks: list[Block]) -> None:
+        self.pages = {page.id: page for page in pages}
+        self.blocks = {block.id: block for block in blocks}
+        self.commits = 0
+        self.flushes = 0
+
+    async def get(self, model, id):
+        if model is Page:
+            return self.pages.get(id)
+        if model is Block:
+            return self.blocks.get(id)
+        return None
+
+    async def flush(self) -> None:
+        self.flushes += 1
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+class FakeOcrBatchStorage:
+    def resolve_media_path(self, rel_path: str) -> Path:
+        return Path("/tmp") / rel_path
+
+
+class FakeOcrBatchProcessor:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def ocr_page_many(self, page_paths: list[str]) -> list[list[dict]]:
+        self.calls.append(page_paths)
+        return [
+            [
+                {
+                    "text": "First",
+                    "bbox_px": {"x": 10, "y": 10, "width": 20, "height": 20},
+                    "raw_surya_ocr": {"text": "First"},
+                }
+            ],
+            [
+                {
+                    "text": "Second",
+                    "bbox_px": {"x": 110, "y": 10, "width": 20, "height": 20},
+                    "raw_surya_ocr": {"text": "Second"},
+                }
+            ],
+        ]
+
+
+class RecordingTaskService(task_service_module.TaskService):
+    def __init__(self, session, storage, processor) -> None:
+        super().__init__(session, storage, processor)
+        self.recalculated_file_ids: list[uuid.UUID] = []
+
+    async def _recalc_progress(self, file_id: uuid.UUID) -> None:
+        self.recalculated_file_ids.append(file_id)
 
 
 def test_color_for_block_type_maps_surya_labels() -> None:
@@ -177,3 +237,64 @@ async def test_execute_render_uses_configured_page_render_dpi(tmp_path: Path, mo
     assert page.image_path == f"pages/{file.id}/11.png"
     assert task.output_payload["dpi"] == 300
     assert [item.type for item in session.added if isinstance(item, Task)] == [TaskType.LAYOUT, TaskType.DETECTION]
+
+
+@pytest.mark.asyncio
+async def test_execute_ocr_tasks_batches_pages_and_updates_blocks() -> None:
+    file_id = uuid.uuid4()
+    page_one = Page(id=uuid.uuid4(), file_id=file_id, page_number=1, status=PageStatus.DONE, image_path="pages/1.png")
+    page_two = Page(id=uuid.uuid4(), file_id=file_id, page_number=2, status=PageStatus.DONE, image_path="pages/2.png")
+    block_one = Block(
+        id=uuid.uuid4(),
+        file_id=file_id,
+        page_id=page_one.id,
+        page_number=1,
+        type="Text",
+        bbox_px={"x": 0, "y": 0, "width": 60, "height": 60},
+        bbox_norm={"x": 0, "y": 0, "width": 1, "height": 1},
+        color_key="blue",
+        raw_surya={},
+        sort_order=0,
+    )
+    block_two = Block(
+        id=uuid.uuid4(),
+        file_id=file_id,
+        page_id=page_two.id,
+        page_number=2,
+        type="Text",
+        bbox_px={"x": 100, "y": 0, "width": 60, "height": 60},
+        bbox_norm={"x": 0, "y": 0, "width": 1, "height": 1},
+        color_key="blue",
+        raw_surya={},
+        sort_order=0,
+    )
+    task_one = Task(
+        id=uuid.uuid4(),
+        file_id=file_id,
+        page_id=page_one.id,
+        type=TaskType.OCR,
+        status=TaskStatus.IN_PROGRESS,
+        input_payload={"block_ids": [str(block_one.id)]},
+    )
+    task_two = Task(
+        id=uuid.uuid4(),
+        file_id=file_id,
+        page_id=page_two.id,
+        type=TaskType.OCR,
+        status=TaskStatus.IN_PROGRESS,
+        input_payload={"block_ids": [str(block_two.id)]},
+    )
+    session = FakeOcrBatchSession([page_one, page_two], [block_one, block_two])
+    processor = FakeOcrBatchProcessor()
+    service = RecordingTaskService(session, FakeOcrBatchStorage(), processor)
+
+    await service.execute_ocr_tasks([task_one, task_two])
+
+    assert processor.calls == [["/tmp/pages/1.png", "/tmp/pages/2.png"]]
+    assert task_one.status == TaskStatus.DONE
+    assert task_two.status == TaskStatus.DONE
+    assert task_one.output_payload == {"blocks": 1, "text_blocks": 1, "lines": 1, "unassigned_lines": 0}
+    assert task_two.output_payload == {"blocks": 1, "text_blocks": 1, "lines": 1, "unassigned_lines": 0}
+    assert block_one.result["text"] == "First"
+    assert block_two.result["text"] == "Second"
+    assert service.recalculated_file_ids == [file_id]

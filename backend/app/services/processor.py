@@ -214,43 +214,54 @@ class ProcessorService:
         }
 
     def ocr_page(self, page_path: str) -> list[dict]:
+        return self.ocr_page_many([page_path])[0]
+
+    def ocr_page_many(self, page_paths: list[str]) -> list[list[dict]]:
+        if not page_paths:
+            return []
         from PIL import Image
 
         predictor = self.predictors.get_recognition_predictor()
         det_predictor = self.predictors.get_detection_predictor()
-        with Image.open(page_path) as image:
-            rgb_image = image.convert("RGB")
+        rgb_images: list[Any] = []
+        for page_path in page_paths:
+            with Image.open(page_path) as image:
+                rgb_images.append(image.convert("RGB"))
         ocr_results = predictor(
-            [rgb_image],
+            rgb_images,
             det_predictor=det_predictor,
             sort_lines=True,
             math_mode=True,
         )
         if not ocr_results:
-            return []
+            return [[] for _ in page_paths]
+        if len(ocr_results) != len(page_paths):
+            raise ValueError("recognition predictor returned unexpected number of results")
+        return [self._ocr_lines_from_result(result) for result in ocr_results]
+
+    def _ocr_lines_from_result(self, result: Any) -> list[dict]:
         lines: list[dict] = []
-        for result in ocr_results:
-            text_lines = getattr(result, "text_lines", []) or []
-            for text_line in text_lines:
-                raw_text = str(getattr(text_line, "text", "")).strip()
-                if not raw_text:
-                    continue
-                bbox = self._line_bbox(getattr(text_line, "bbox", None), getattr(text_line, "polygon", None))
-                if bbox is None:
-                    continue
-                lines.append(
-                    {
-                        "text": raw_text,
-                        "bbox_px": bbox,
-                        "polygon_px": self._polygon_px(getattr(text_line, "polygon", None)),
-                        "confidence": self._to_json_compatible(getattr(text_line, "confidence", None)),
-                        "raw_surya_ocr": self._to_json_compatible(
-                            text_line.model_dump(mode="json")
-                            if hasattr(text_line, "model_dump")
-                            else text_line
-                        ),
-                    }
-                )
+        text_lines = getattr(result, "text_lines", []) or []
+        for text_line in text_lines:
+            raw_text = str(getattr(text_line, "text", "")).strip()
+            if not raw_text:
+                continue
+            bbox = self._line_bbox(getattr(text_line, "bbox", None), getattr(text_line, "polygon", None))
+            if bbox is None:
+                continue
+            lines.append(
+                {
+                    "text": raw_text,
+                    "bbox_px": bbox,
+                    "polygon_px": self._polygon_px(getattr(text_line, "polygon", None)),
+                    "confidence": self._to_json_compatible(getattr(text_line, "confidence", None)),
+                    "raw_surya_ocr": self._to_json_compatible(
+                        text_line.model_dump(mode="json")
+                        if hasattr(text_line, "model_dump")
+                        else text_line
+                    ),
+                }
+            )
         return lines
 
     def _line_bbox(self, bbox: Any, polygon: Any) -> dict | None:

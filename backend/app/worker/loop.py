@@ -46,14 +46,19 @@ class WorkerLoop:
             await asyncio.sleep(self.poll_seconds)
 
     async def _run_once(self, service: TaskService) -> None:
-        if self.batch_size > 1 and self.worker_task_types_set == {TaskType.LAYOUT}:
+        batch_executor = None
+        if self.worker_task_types_set == {TaskType.LAYOUT}:
+            batch_executor = service.execute_layout_tasks
+        elif self.worker_task_types_set == {TaskType.OCR}:
+            batch_executor = service.execute_ocr_tasks
+        if self.batch_size > 1 and batch_executor is not None:
             tasks = await service.claim_next_tasks(
                 self.stale_after_seconds,
                 self.worker_task_types_set,
                 limit=self.batch_size,
             )
             if tasks:
-                await service.execute_layout_tasks(tasks)
+                await batch_executor(tasks)
             return
         next_task = await service.claim_next_task(self.stale_after_seconds, self.worker_task_types_set)
         if next_task is not None:

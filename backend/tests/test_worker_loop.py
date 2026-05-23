@@ -59,3 +59,23 @@ async def test_run_once_claims_layout_batch_and_executes_once() -> None:
     service.execute_layout_tasks.assert_awaited_once_with(service.claim_next_tasks.return_value)
     service.claim_next_task.assert_not_called()
     service.execute_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_once_claims_ocr_batch_and_executes_once() -> None:
+    service = AsyncMock()
+    service.claim_next_tasks.return_value = [SimpleNamespace(id="task-1"), SimpleNamespace(id="task-2")]
+    loop = WorkerLoop(
+        poll_seconds=0.01,
+        stale_after_seconds=120,
+        worker_task_types_set={TaskType.OCR},
+        cpu_threads=1,
+        batch_size=4,
+    )
+
+    await loop._run_once(service)
+
+    service.claim_next_tasks.assert_awaited_once_with(120, {TaskType.OCR}, limit=4)
+    service.execute_ocr_tasks.assert_awaited_once_with(service.claim_next_tasks.return_value)
+    service.claim_next_task.assert_not_called()
+    service.execute_task.assert_not_called()

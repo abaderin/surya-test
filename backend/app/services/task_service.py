@@ -609,10 +609,84 @@ class TaskService:
         await self.session.flush()
 
     async def _execute_ocr(self, task: Task) -> None:
+        result = await self._prepare_ocr_task(task)
+        if result is None:
+            return
+        page_image_abs_path, ocr_blocks = result
+        ocr_lines = await asyncio.to_thread(self.processor.ocr_page, page_image_abs_path)
+        task.output_payload = self._apply_ocr_lines_to_blocks(ocr_blocks, ocr_lines)
+        await self.session.flush()
+
+    async def execute_ocr_tasks(self, tasks: list[Task]) -> None:
+        if not tasks:
+            return
+        valid: list[tuple[Task, str, list[Block]]] = []
+        failed_file_ids: set[UUID] = set()
+        completed_file_ids: set[UUID] = set()
+        now = datetime.now(UTC)
+        for task in tasks:
+            if task.deleted:
+                continue
+            try:
+                if task.type != TaskType.OCR:
+                    raise ValueError("ocr batch accepts ocr tasks only")
+                result = await self._prepare_ocr_task(task)
+                if result is None:
+                    task.status = TaskStatus.DONE
+                    task.finished_at = now
+                    if task.file_id:
+                        completed_file_ids.add(task.file_id)
+                    continue
+                page_image_abs_path, ocr_blocks = result
+                valid.append((task, page_image_abs_path, ocr_blocks))
+            except Exception as exc:  # noqa: BLE001
+                task.status = TaskStatus.FAILED
+                task.error_message = str(exc)
+                task.finished_at = now
+                if task.file_id:
+                    failed_file_ids.add(task.file_id)
+                    await self._emit(task.file_id, "task.updated", {"task_id": str(task.id), "status": task.status})
+        await self.session.flush()
+        if not valid:
+            await self.session.commit()
+            for file_id in failed_file_ids | completed_file_ids:
+                await self._recalc_progress(file_id)
+            return
+
+        try:
+            batch_lines = await asyncio.to_thread(
+                self.processor.ocr_page_many,
+                [page_image_abs_path for _, page_image_abs_path, _ in valid],
+            )
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            for task, _, _ in valid:
+                task.status = TaskStatus.FAILED
+                task.error_message = message
+                task.finished_at = now
+                if task.file_id:
+                    failed_file_ids.add(task.file_id)
+                    await self._emit(task.file_id, "task.updated", {"task_id": str(task.id), "status": task.status})
+            await self.session.commit()
+            for file_id in failed_file_ids:
+                await self._recalc_progress(file_id)
+            return
+
+        for (task, _, ocr_blocks), ocr_lines in zip(valid, batch_lines, strict=True):
+            task.output_payload = self._apply_ocr_lines_to_blocks(ocr_blocks, ocr_lines)
+            task.status = TaskStatus.DONE
+            task.finished_at = datetime.now(UTC)
+            if task.file_id:
+                completed_file_ids.add(task.file_id)
+        await self.session.commit()
+        for file_id in failed_file_ids | completed_file_ids:
+            await self._recalc_progress(file_id)
+
+    async def _prepare_ocr_task(self, task: Task) -> tuple[str, list[Block]] | None:
         block_ids = ocr_block_ids_from_payload(task.input_payload)
         if not block_ids:
             task.output_payload = {"skipped": True, "reason": "no_ocr_blocks"}
-            return
+            return None
         blocks: list[Block] = []
         for block_id in block_ids:
             block = await self.session.get(Block, block_id)
@@ -622,13 +696,13 @@ class TaskService:
         ocr_blocks = [block for block in blocks if should_enqueue_ocr(block.type)]
         if not ocr_blocks:
             task.output_payload = {"skipped": True, "reason": "unsupported_label"}
-            return
+            return None
         page = await self.session.get(Page, ocr_blocks[0].page_id)
         if not page or not page.image_path:
             raise ValueError("page image not ready")
-        page_image_abs_path = self.storage.resolve_media_path(page.image_path)
-        ocr_lines = await asyncio.to_thread(self.processor.ocr_page, str(page_image_abs_path))
+        return str(self.storage.resolve_media_path(page.image_path)), ocr_blocks
 
+    def _apply_ocr_lines_to_blocks(self, ocr_blocks: list[Block], ocr_lines: list[dict]) -> dict:
         grouped_lines: dict[UUID, list[dict]] = {block.id: [] for block in ocr_blocks}
         unassigned_lines = 0
         for line in ocr_lines:
@@ -668,13 +742,12 @@ class TaskService:
                 "lines": lines,
                 "raw_surya_ocr": [line.get("raw_surya_ocr") for line in lines],
             }
-        task.output_payload = {
+        return {
             "blocks": len(ocr_blocks),
             "text_blocks": with_text,
             "lines": total_lines,
             "unassigned_lines": unassigned_lines,
         }
-        await self.session.flush()
 
     async def _execute_image_extraction(self, task: Task) -> None:
         block_id = task.input_payload.get("block_id")
