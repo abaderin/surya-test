@@ -13,7 +13,7 @@ import {
   Title,
 } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Route, Routes, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, Route, Routes, useParams, useSearchParams } from "react-router-dom";
 import {
   cancelFile,
   deleteFile,
@@ -26,7 +26,7 @@ import {
   reprocessFile,
   uploadPdf,
 } from "./api";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getBlockContentState } from "./blockContent";
 import { BlockItem, DetectionBoxItem, PageItem } from "./types";
 
@@ -47,31 +47,47 @@ function useFileEvents(fileId: string | undefined) {
 
 function FilesPage() {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const files = useQuery({ queryKey: ["files"], queryFn: fetchFiles });
   const [uploading, setUploading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [reprocessingFileId, setReprocessingFileId] = useState<string | null>(null);
   const [cancellingFileId, setCancellingFileId] = useState<string | null>(null);
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
   const [reprocessErrorById, setReprocessErrorById] = useState<Record<string, string>>({});
   const [cancelErrorById, setCancelErrorById] = useState<Record<string, string>>({});
   const [deleteErrorById, setDeleteErrorById] = useState<Record<string, string>>({});
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const onUpload = async () => {
-    if (!selectedFile) return;
+    if (selectedFiles.length === 0) return;
     setUploading(true);
-    setUploadError(null);
+    setUploadErrors([]);
+    setUploadProgress({ done: 0, total: selectedFiles.length });
+    const errors: string[] = [];
     try {
-      const created = await uploadPdf(selectedFile);
-      setSelectedFile(null);
+      for (let i = 0; i < selectedFiles.length; i += 1) {
+        const file = selectedFiles[i];
+        try {
+          await uploadPdf(file);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Upload failed";
+          errors.push(`${file.name}: ${message}`);
+        } finally {
+          setUploadProgress({ done: i + 1, total: selectedFiles.length });
+        }
+      }
+      setSelectedFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       await qc.invalidateQueries({ queryKey: ["files"] });
-      navigate(`/files/${created.id}`);
+      await qc.invalidateQueries({ queryKey: ["tasks"] });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upload failed";
-      setUploadError(message);
+      errors.push(message);
     } finally {
+      setUploadErrors(errors);
+      setUploadProgress(null);
       setUploading(false);
     }
   };
@@ -126,23 +142,27 @@ function FilesPage() {
       <Group>
         <Title order={2}>Files</Title>
         <input
+          ref={fileInputRef}
           type="file"
           accept=".pdf"
+          multiple
           onChange={(e) => {
-            const file = e.target.files?.[0] ?? null;
-            setSelectedFile(file);
-            setUploadError(null);
+            const filesList = e.target.files ? Array.from(e.target.files) : [];
+            setSelectedFiles(filesList);
+            setUploadErrors([]);
           }}
         />
-        <Button onClick={onUpload} disabled={!selectedFile || uploading} loading={uploading}>
+        <Button onClick={onUpload} disabled={selectedFiles.length === 0 || uploading} loading={uploading}>
           Upload
         </Button>
         <Button
           variant="light"
-          disabled={!selectedFile || uploading}
+          disabled={selectedFiles.length === 0 || uploading}
           onClick={() => {
-            setSelectedFile(null);
-            setUploadError(null);
+            setSelectedFiles([]);
+            setUploadErrors([]);
+            setUploadProgress(null);
+            if (fileInputRef.current) fileInputRef.current.value = "";
           }}
         >
           Clear
@@ -150,15 +170,23 @@ function FilesPage() {
       </Group>
       <Group>
         <Text size="sm">
-          Selected: {selectedFile ? `${selectedFile.name} (${Math.ceil(selectedFile.size / 1024)} KB)` : "none"}
+          {selectedFiles.length === 0
+            ? "Selected: none"
+            : selectedFiles.length === 1
+              ? `Selected: ${selectedFiles[0].name} (${Math.ceil(selectedFiles[0].size / 1024)} KB)`
+              : `Selected: ${selectedFiles.length} files (${Math.ceil(selectedFiles.reduce((sum, file) => sum + file.size, 0) / 1024)} KB)`}
         </Text>
       </Group>
-      {uploadError && (
-        <Text size="sm" c="red">
-          {uploadError}
+      {uploadErrors.map((message, index) => (
+        <Text size="sm" c="red" key={`${index}-${message}`}>
+          {message}
+        </Text>
+      ))}
+      {uploading && (
+        <Text size="sm">
+          Uploading {uploadProgress?.done ?? 0}/{uploadProgress?.total ?? selectedFiles.length}...
         </Text>
       )}
-      {uploading && <Text size="sm">Uploading...</Text>}
       <Group>
         <Text size="sm" c="dimmed">
           Upload starts only after pressing the Upload button.
