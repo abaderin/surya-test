@@ -3,20 +3,52 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File as UploadFileArg, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_storage, get_task_service
 from app.models.block import Block
 from app.models.detection_box import DetectionBox
-from app.models.enums import FileStatus
+from app.models.enums import FileStatus, TaskStatus
 from app.models.file import File
 from app.models.page import Page
+from app.models.task import Task
 from app.schemas.files import BlockRead, DetectionBoxRead, FileRead, PageListResponse, PageRead
 from app.services.storage import StorageService
 from app.services.task_service import TaskService
 
 router = APIRouter(prefix="/api/files", tags=["files"])
+TASK_STATUS_KEYS: dict[TaskStatus, str] = {
+    TaskStatus.NEW: "new",
+    TaskStatus.DONE: "done",
+    TaskStatus.FAILED: "failed",
+}
+
+
+def _empty_task_status_counts() -> dict[str, int]:
+    return {"new": 0, "done": 0, "failed": 0}
+
+
+async def _load_task_status_counts(db: AsyncSession, file_ids: list[UUID]) -> dict[UUID, dict[str, int]]:
+    if not file_ids:
+        return {}
+    rows = await db.execute(
+        select(Task.file_id, Task.status, func.count())
+        .where(
+            and_(
+                Task.deleted.is_(False),
+                Task.file_id.in_(file_ids),
+                Task.status.in_(tuple(TASK_STATUS_KEYS.keys())),
+            )
+        )
+        .group_by(Task.file_id, Task.status)
+    )
+    counts_by_file_id = {file_id: _empty_task_status_counts() for file_id in file_ids}
+    for file_id, status, count in rows.all():
+        key = TASK_STATUS_KEYS.get(status)
+        if key is not None:
+            counts_by_file_id[file_id][key] = int(count)
+    return counts_by_file_id
 
 
 @router.post("", response_model=FileRead)
@@ -44,7 +76,13 @@ async def list_files(
     if status:
         query = query.where(File.status == status)
     items = (await db.execute(query)).scalars().all()
-    return [FileRead.model_validate(it, from_attributes=True) for it in items]
+    counts_by_file_id = await _load_task_status_counts(db, [item.id for item in items])
+    response_items: list[FileRead] = []
+    for item in items:
+        payload = FileRead.model_validate(item, from_attributes=True)
+        payload.task_status_counts = counts_by_file_id.get(item.id, _empty_task_status_counts())
+        response_items.append(payload)
+    return response_items
 
 
 @router.get("/{file_id}", response_model=FileRead)
@@ -52,7 +90,9 @@ async def get_file(file_id: UUID, db: AsyncSession = Depends(get_db)) -> FileRea
     model = await db.get(File, file_id)
     if not model:
         raise HTTPException(status_code=404, detail="file not found")
-    return FileRead.model_validate(model, from_attributes=True)
+    payload = FileRead.model_validate(model, from_attributes=True)
+    payload.task_status_counts = (await _load_task_status_counts(db, [model.id])).get(model.id, _empty_task_status_counts())
+    return payload
 
 
 @router.post("/{file_id}/reprocess", response_model=FileRead)

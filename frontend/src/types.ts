@@ -21,6 +21,11 @@ export type FileItem = {
   progress_total: number;
   cover_path: string | null;
   error_summary: string | null;
+  task_status_counts: {
+    new: number;
+    done: number;
+    failed: number;
+  };
   created_at: string;
   updated_at: string;
 };

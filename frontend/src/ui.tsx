@@ -169,8 +169,10 @@ function FilesPage() {
           <Group justify="space-between">
             <Box>
               <Text fw={600}>{f.filename}</Text>
+              <Text size="sm">status: {f.status}</Text>
+              <Text size="sm">pages: {f.pages_count ?? "-"}</Text>
               <Text size="sm">
-                status: {f.status} | progress: {f.progress_done}/{f.progress_total} | pages: {f.pages_count ?? "-"}
+                {f.task_status_counts.new} new, {f.task_status_counts.done} done, {f.task_status_counts.failed} failed
               </Text>
               {f.error_summary && <Text c="red">{f.error_summary}</Text>}
               {reprocessErrorById[f.id] && <Text c="red">{reprocessErrorById[f.id]}</Text>}

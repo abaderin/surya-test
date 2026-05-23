@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.enums import FileStatus, PageStatus
 
@@ -17,6 +17,7 @@ class FileRead(BaseModel):
     progress_total: int
     cover_path: str | None
     error_summary: str | None
+    task_status_counts: dict[str, int] = Field(default_factory=lambda: {"new": 0, "done": 0, "failed": 0})
     created_at: datetime
     updated_at: datetime
 
